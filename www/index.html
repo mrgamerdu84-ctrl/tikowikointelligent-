@@ -85,6 +85,7 @@
     </div>
     <div class="header-actions">
       <button onclick="openAppsPanel()">Applis</button>
+      <button onclick="document.getElementById('aboutPanel').classList.add('open')">Aide</button>
       <button onclick="openSettingsPanel(); setTimeout(refreshPersonalClapStatus, 0)">Réglages</button>
     </div>
   </header>
@@ -105,6 +106,62 @@
     <button onclick="closeAppsPanel()">Fermer</button>
   </div>
   <div id="appsList"></div>
+</div>
+
+<div id="aboutPanel" class="panel">
+  <div class="top">
+    <h2>À propos / Fonctions</h2>
+    <button onclick="document.getElementById('aboutPanel').classList.remove('open')">Fermer</button>
+  </div>
+  <div class="settings-content">
+    <div class="setting-card">
+      <div class="setting-title">Tikowikointelligent</div>
+      <p class="setting-help">Assistant personnel Android qui aide à piloter le téléphone à la voix et à retrouver rapidement les fonctions utiles du quotidien.</p>
+      <div class="privacy-note">© 2026 tikowikoFamily</div>
+    </div>
+
+    <div class="setting-card">
+      <div class="setting-title">Ouvrir les applications</div>
+      <p class="setting-help">Lance les applications installées avec une commande vocale.</p>
+      <div class="example">« Ouvre YouTube » · « Lance Spotify »</div>
+    </div>
+
+    <div class="setting-card">
+      <div class="setting-title">Agenda et rappels</div>
+      <p class="setting-help">Prépare des rendez-vous et des rappels dans l'agenda Android pour que tu les vérifies avant de les enregistrer.</p>
+      <div class="example">« Rendez-vous dentiste demain à 14 h »</div>
+      <div class="example">« Rappelle-moi d'acheter du pain demain à 18 h »</div>
+    </div>
+
+    <div class="setting-card">
+      <div class="setting-title">Appels sécurisés</div>
+      <p class="setting-help">Ouvre un contact ou le composeur sans lancer silencieusement l'appel. Un appel futur peut être transformé en rappel.</p>
+      <div class="example">« Appelle Maman » · « Jeudi à 18 h appelle Maman »</div>
+    </div>
+
+    <div class="setting-card">
+      <div class="setting-title">Liste de courses</div>
+      <p class="setting-help">Ajoute, retire, consulte, coche ou vide les courses. La liste reste enregistrée localement sur le téléphone.</p>
+      <div class="example">« Ajoute lait, œufs et pain à ma liste de courses »</div>
+    </div>
+
+    <div class="setting-card">
+      <div class="setting-title">Double claquement</div>
+      <p class="setting-help">Deux claquements rapprochés peuvent réveiller Tikowikointelligent. Tu peux régler la sensibilité et apprendre un profil personnel de claquement pour réduire les faux déclenchements.</p>
+      <div class="privacy-note">Le profil personnel n'est pas une biométrie fiable à 100 % et ne prouve pas l'identité d'une personne.</div>
+    </div>
+
+    <div class="setting-card">
+      <div class="setting-title">Retrouver mon téléphone</div>
+      <p class="setting-help">Quand l'assistant écoute déjà, une commande peut faire sonner et vibrer le téléphone pendant quelques secondes.</p>
+      <div class="example">« Où est mon téléphone ? » · « Tikowiko, où es-tu ? »</div>
+    </div>
+
+    <div class="setting-card">
+      <div class="setting-title">Confidentialité</div>
+      <p class="setting-help">Les fonctions Tikowiko privilégient le traitement local. La détection des claquements ne conserve pas les enregistrements audio. La reconnaissance vocale dépend du service Android installé et peut utiliser Internet selon les réglages du téléphone.</p>
+    </div>
+  </div>
 </div>
 
 <div id="settingsPanel" class="panel">
