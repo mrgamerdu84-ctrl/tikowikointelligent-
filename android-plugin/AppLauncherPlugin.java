@@ -34,8 +34,6 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 
 import java.util.List;
 
-// Plugin maison : lance les applications, prépare les rendez-vous, ouvre les contacts / le composeur,
-// aide à retrouver le téléphone et contrôle la détection locale / le profil personnel de claquement.
 @CapacitorPlugin(name = "AppLauncher")
 public class AppLauncherPlugin extends Plugin {
 
@@ -56,15 +54,11 @@ public class AppLauncherPlugin extends Plugin {
         JSArray apps = new JSArray();
         for (android.content.pm.ResolveInfo info : resolved) {
             ApplicationInfo appInfo = info.activityInfo.applicationInfo;
-            String label = pm.getApplicationLabel(appInfo).toString();
-            String packageName = appInfo.packageName;
-
             JSObject app = new JSObject();
-            app.put("label", label);
-            app.put("packageName", packageName);
+            app.put("label", pm.getApplicationLabel(appInfo).toString());
+            app.put("packageName", appInfo.packageName);
             apps.put(app);
         }
-
         JSObject result = new JSObject();
         result.put("apps", apps);
         call.resolve(result);
@@ -73,25 +67,14 @@ public class AppLauncherPlugin extends Plugin {
     @PluginMethod
     public void launch(PluginCall call) {
         String packageName = call.getString("packageName");
-        if (packageName == null) {
-            call.reject("packageName manquant");
-            return;
-        }
-
-        PackageManager pm = getContext().getPackageManager();
-        Intent launchIntent = pm.getLaunchIntentForPackage(packageName);
-
-        if (launchIntent == null) {
-            call.reject("Impossible de trouver ou lancer : " + packageName);
-            return;
-        }
-
+        if (packageName == null) { call.reject("packageName manquant"); return; }
+        Intent launchIntent = getContext().getPackageManager().getLaunchIntentForPackage(packageName);
+        if (launchIntent == null) { call.reject("Impossible de trouver ou lancer : " + packageName); return; }
         launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         getContext().startActivity(launchIntent);
         call.resolve();
     }
 
-    /** Ouvre directement l'écran Android où l'utilisateur peut choisir son assistant numérique. */
     @PluginMethod
     public void openAssistantSettings(PluginCall call) {
         try {
@@ -102,55 +85,31 @@ public class AppLauncherPlugin extends Plugin {
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             }
             getContext().startActivity(intent);
-            JSObject result = new JSObject();
-            result.put("opened", true);
-            call.resolve(result);
-        } catch (Exception e) {
-            call.reject("Impossible d'ouvrir les réglages de l'assistant : " + e.getMessage());
-        }
+            JSObject result = new JSObject(); result.put("opened", true); call.resolve(result);
+        } catch (Exception e) { call.reject("Impossible d'ouvrir les réglages de l'assistant : " + e.getMessage()); }
     }
 
-    /** Indique si Tikowiko est actuellement l'assistant Android par défaut. */
     @PluginMethod
     public void getAssistantStatus(PluginCall call) {
         JSObject result = new JSObject();
         try {
-            // Le nom de cette clé Secure n'est pas exposé comme constante publique sur
-            // toutes les versions du SDK Android, on utilise donc sa clé système stable.
-            String assistant = Settings.Secure.getString(
-                    getContext().getContentResolver(),
-                    "assistant"
-            );
-            ComponentName selected = assistant == null || assistant.isEmpty()
-                    ? null
-                    : ComponentName.unflattenFromString(assistant);
-            boolean isTikowiko = selected != null
-                    && getContext().getPackageName().equals(selected.getPackageName());
-
+            String assistant = Settings.Secure.getString(getContext().getContentResolver(), "assistant");
+            ComponentName selected = assistant == null || assistant.isEmpty() ? null : ComponentName.unflattenFromString(assistant);
+            boolean isTikowiko = selected != null && getContext().getPackageName().equals(selected.getPackageName());
             result.put("isDefault", isTikowiko);
             result.put("selectedPackage", selected == null ? "" : selected.getPackageName());
             call.resolve(result);
         } catch (Exception e) {
-            result.put("isDefault", false);
-            result.put("selectedPackage", "");
-            result.put("statusUnavailable", true);
-            call.resolve(result);
+            result.put("isDefault", false); result.put("selectedPackage", ""); result.put("statusUnavailable", true); call.resolve(result);
         }
     }
 
-    /**
-     * Fait sonner et vibrer le téléphone pendant quelques secondes pour le retrouver.
-     * Le volume d'alarme est temporairement augmenté puis restauré. Le mode Ne pas déranger
-     * reste sous le contrôle d'Android : Tikowiko ne cherche pas à le contourner.
-     */
     @PluginMethod
     public void findMyPhone(PluginCall call) {
         Integer requestedSeconds = call.getInt("seconds");
         int seconds = requestedSeconds == null ? 12 : Math.max(5, Math.min(requestedSeconds, 30));
-
         try {
             stopFindPhoneInternal();
-
             Context context = getContext();
             findPhoneAudioManager = (AudioManager) context.getSystemService(Context.AUDIO_SERVICE);
             if (findPhoneAudioManager != null) {
@@ -158,284 +117,147 @@ public class AppLauncherPlugin extends Plugin {
                 int max = findPhoneAudioManager.getStreamMaxVolume(AudioManager.STREAM_ALARM);
                 findPhoneAudioManager.setStreamVolume(AudioManager.STREAM_ALARM, max, 0);
             }
-
             Uri sound = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM);
             if (sound == null) sound = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE);
             if (sound == null) sound = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
-
             if (sound != null) {
                 findPhoneRingtone = RingtoneManager.getRingtone(context, sound);
                 if (findPhoneRingtone != null) {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                        findPhoneRingtone.setAudioAttributes(new AudioAttributes.Builder()
-                                .setUsage(AudioAttributes.USAGE_ALARM)
-                                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                                .build());
+                        findPhoneRingtone.setAudioAttributes(new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build());
                     }
                     findPhoneRingtone.play();
                 }
             }
-
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 VibratorManager manager = (VibratorManager) context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE);
                 findPhoneVibrator = manager == null ? null : manager.getDefaultVibrator();
-            } else {
-                findPhoneVibrator = (Vibrator) context.getSystemService(Context.VIBRATOR_SERVICE);
-            }
-
+            } else findPhoneVibrator = (Vibrator) context.getSystemService(Context.VIBRATOR_SERVICE);
             if (findPhoneVibrator != null && findPhoneVibrator.hasVibrator()) {
                 long[] pattern = new long[]{0, 550, 250, 550, 250, 900};
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    findPhoneVibrator.vibrate(VibrationEffect.createWaveform(pattern, 0));
-                } else {
-                    findPhoneVibrator.vibrate(pattern, 0);
-                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) findPhoneVibrator.vibrate(VibrationEffect.createWaveform(pattern, 0));
+                else findPhoneVibrator.vibrate(pattern, 0);
             }
-
             PowerManager powerManager = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
             if (powerManager != null && !powerManager.isInteractive()) {
-                PowerManager.WakeLock wakeLock = powerManager.newWakeLock(
-                        PowerManager.SCREEN_BRIGHT_WAKE_LOCK | PowerManager.ACQUIRE_CAUSES_WAKEUP,
-                        "tikowiko:find-phone"
-                );
+                PowerManager.WakeLock wakeLock = powerManager.newWakeLock(PowerManager.SCREEN_BRIGHT_WAKE_LOCK | PowerManager.ACQUIRE_CAUSES_WAKEUP, "tikowiko:find-phone");
                 wakeLock.acquire(3000L);
             }
-
             findPhoneHandler.removeCallbacks(stopFindPhoneRunnable);
             findPhoneHandler.postDelayed(stopFindPhoneRunnable, seconds * 1000L);
-
-            JSObject result = new JSObject();
-            result.put("started", true);
-            result.put("seconds", seconds);
-            call.resolve(result);
-        } catch (Exception e) {
-            stopFindPhoneInternal();
-            call.reject("Impossible de faire sonner le téléphone : " + e.getMessage());
-        }
+            JSObject result = new JSObject(); result.put("started", true); result.put("seconds", seconds); call.resolve(result);
+        } catch (Exception e) { stopFindPhoneInternal(); call.reject("Impossible de faire sonner le téléphone : " + e.getMessage()); }
     }
 
     @PluginMethod
-    public void stopFindMyPhone(PluginCall call) {
-        stopFindPhoneInternal();
-        JSObject result = new JSObject();
-        result.put("stopped", true);
-        call.resolve(result);
-    }
+    public void stopFindMyPhone(PluginCall call) { stopFindPhoneInternal(); JSObject r = new JSObject(); r.put("stopped", true); call.resolve(r); }
 
     private void stopFindPhoneInternal() {
         findPhoneHandler.removeCallbacks(stopFindPhoneRunnable);
-
-        if (findPhoneRingtone != null) {
-            try { findPhoneRingtone.stop(); } catch (Exception ignored) {}
-            findPhoneRingtone = null;
-        }
-
-        if (findPhoneVibrator != null) {
-            try { findPhoneVibrator.cancel(); } catch (Exception ignored) {}
-            findPhoneVibrator = null;
-        }
-
+        if (findPhoneRingtone != null) { try { findPhoneRingtone.stop(); } catch (Exception ignored) {} findPhoneRingtone = null; }
+        if (findPhoneVibrator != null) { try { findPhoneVibrator.cancel(); } catch (Exception ignored) {} findPhoneVibrator = null; }
         if (findPhoneAudioManager != null && previousAlarmVolume != null) {
-            try {
-                findPhoneAudioManager.setStreamVolume(
-                        AudioManager.STREAM_ALARM,
-                        previousAlarmVolume,
-                        0
-                );
-            } catch (Exception ignored) {}
+            try { findPhoneAudioManager.setStreamVolume(AudioManager.STREAM_ALARM, previousAlarmVolume, 0); } catch (Exception ignored) {}
         }
-
-        previousAlarmVolume = null;
-        findPhoneAudioManager = null;
+        previousAlarmVolume = null; findPhoneAudioManager = null;
     }
 
     @PluginMethod
     public void openContactOrDialer(PluginCall call) {
         String target = call.getString("target");
-        if (target == null || target.trim().isEmpty()) {
-            call.reject("Contact ou numéro manquant");
-            return;
-        }
-
-        String value = target.trim();
-        Intent intent;
-        String mode;
-
+        if (target == null || target.trim().isEmpty()) { call.reject("Contact ou numéro manquant"); return; }
+        String value = target.trim(); Intent intent; String mode;
         if (value.matches("^[+0-9][0-9 .()\\-]{3,}$")) {
-            String number = value.replaceAll("[^0-9+]", "");
-            intent = new Intent(Intent.ACTION_DIAL, Uri.fromParts("tel", number, null));
-            mode = "dialer";
+            String number = value.replaceAll("[^0-9+]", ""); intent = new Intent(Intent.ACTION_DIAL, Uri.fromParts("tel", number, null)); mode = "dialer";
         } else {
-            Uri searchUri = Uri.withAppendedPath(
-                    ContactsContract.Contacts.CONTENT_FILTER_URI,
-                    Uri.encode(value)
-            );
-            intent = new Intent(Intent.ACTION_VIEW, searchUri);
-            mode = "contact-search";
+            Uri searchUri = Uri.withAppendedPath(ContactsContract.Contacts.CONTENT_FILTER_URI, Uri.encode(value)); intent = new Intent(Intent.ACTION_VIEW, searchUri); mode = "contact-search";
         }
-
-        if (intent.resolveActivity(getContext().getPackageManager()) == null) {
-            call.reject("Aucune application Téléphone/Contacts compatible n'est disponible");
-            return;
-        }
-
+        if (intent.resolveActivity(getContext().getPackageManager()) == null) { call.reject("Aucune application Téléphone/Contacts compatible n'est disponible"); return; }
         try {
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            getContext().startActivity(intent);
-            JSObject result = new JSObject();
-            result.put("opened", true);
-            result.put("mode", mode);
-            call.resolve(result);
-        } catch (Exception e) {
-            call.reject("Impossible d'ouvrir le téléphone : " + e.getMessage());
-        }
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); getContext().startActivity(intent);
+            JSObject result = new JSObject(); result.put("opened", true); result.put("mode", mode); call.resolve(result);
+        } catch (Exception e) { call.reject("Impossible d'ouvrir le téléphone : " + e.getMessage()); }
     }
 
     @PluginMethod
     public void createCalendarEvent(PluginCall call) {
-        String title = call.getString("title");
-        Long startMillis = call.getLong("startMillis");
-        Long endMillis = call.getLong("endMillis");
-
-        if (title == null || title.trim().isEmpty()) {
-            call.reject("Titre du rendez-vous manquant");
-            return;
-        }
-        if (startMillis == null) {
-            call.reject("Date ou heure du rendez-vous manquante");
-            return;
-        }
-        if (endMillis == null || endMillis <= startMillis) {
-            endMillis = startMillis + 60L * 60L * 1000L;
-        }
-
+        String title = call.getString("title"); Long startMillis = call.getLong("startMillis"); Long endMillis = call.getLong("endMillis");
+        if (title == null || title.trim().isEmpty()) { call.reject("Titre du rendez-vous manquant"); return; }
+        if (startMillis == null) { call.reject("Date ou heure du rendez-vous manquante"); return; }
+        if (endMillis == null || endMillis <= startMillis) endMillis = startMillis + 60L * 60L * 1000L;
         try {
-            Intent intent = new Intent(Intent.ACTION_INSERT)
-                    .setData(CalendarContract.Events.CONTENT_URI)
+            Intent intent = new Intent(Intent.ACTION_INSERT).setData(CalendarContract.Events.CONTENT_URI)
                     .putExtra(CalendarContract.Events.TITLE, title.trim())
                     .putExtra(CalendarContract.EXTRA_EVENT_BEGIN_TIME, startMillis)
                     .putExtra(CalendarContract.EXTRA_EVENT_END_TIME, endMillis);
-
-            if (intent.resolveActivity(getContext().getPackageManager()) == null) {
-                call.reject("Aucune application d'agenda compatible n'est installée");
-                return;
-            }
-
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            getContext().startActivity(intent);
-
-            JSObject result = new JSObject();
-            result.put("opened", true);
-            call.resolve(result);
-        } catch (Exception e) {
-            call.reject("Impossible d'ouvrir l'agenda : " + e.getMessage());
-        }
+            if (intent.resolveActivity(getContext().getPackageManager()) == null) { call.reject("Aucune application d'agenda compatible n'est installée"); return; }
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); getContext().startActivity(intent);
+            JSObject result = new JSObject(); result.put("opened", true); call.resolve(result);
+        } catch (Exception e) { call.reject("Impossible d'ouvrir l'agenda : " + e.getMessage()); }
     }
 
     @PluginMethod
     public void startClapActivation(PluginCall call) {
-        if (!hasMicrophonePermission()) {
-            call.reject("PERMISSION_MICRO_REQUIRED");
-            return;
-        }
-
+        if (!hasMicrophonePermission()) { call.reject("PERMISSION_MICRO_REQUIRED"); return; }
         try {
             Intent service = new Intent(getContext(), ClapDetectionService.class);
             ContextCompat.startForegroundService(getContext(), service);
-            JSObject result = new JSObject();
-            result.put("enabled", true);
-            result.put("sensitivity", getSavedSensitivity());
-            call.resolve(result);
-        } catch (Exception e) {
-            call.reject("Impossible d'activer le double claquement : " + e.getMessage());
-        }
+            JSObject result = buildClapStatus(); result.put("enabled", true); call.resolve(result);
+        } catch (Exception e) { call.reject("Impossible d'activer le double claquement : " + e.getMessage()); }
     }
 
     @PluginMethod
     public void stopClapActivation(PluginCall call) {
         try {
-            Intent service = new Intent(getContext(), ClapDetectionService.class);
-            getContext().stopService(service);
-            prefs().edit().putBoolean(ClapDetectionService.PREF_CLAP_ENABLED, false).apply();
-
-            JSObject result = new JSObject();
-            result.put("enabled", false);
-            result.put("sensitivity", getSavedSensitivity());
-            call.resolve(result);
-        } catch (Exception e) {
-            call.reject("Impossible de désactiver le double claquement : " + e.getMessage());
-        }
+            Intent service = new Intent(getContext(), ClapDetectionService.class); getContext().stopService(service);
+            prefs().edit().putBoolean(ClapDetectionService.PREF_CLAP_ENABLED, false).putString(ClapDetectionService.PREF_CLAP_STAGE, "Désactivé").apply();
+            call.resolve(buildClapStatus());
+        } catch (Exception e) { call.reject("Impossible de désactiver le double claquement : " + e.getMessage()); }
     }
 
     @PluginMethod
-    public void getClapActivationStatus(PluginCall call) {
-        boolean enabled = prefs().getBoolean(ClapDetectionService.PREF_CLAP_ENABLED, false);
+    public void getClapActivationStatus(PluginCall call) { call.resolve(buildClapStatus()); }
 
+    private JSObject buildClapStatus() {
+        SharedPreferences p = prefs();
         JSObject result = new JSObject();
-        result.put("enabled", enabled);
+        result.put("enabled", p.getBoolean(ClapDetectionService.PREF_CLAP_ENABLED, false));
         result.put("sensitivity", getSavedSensitivity());
-        call.resolve(result);
+        result.put("stage", p.getString(ClapDetectionService.PREF_CLAP_STAGE, "En attente"));
+        result.put("stageAt", p.getLong(ClapDetectionService.PREF_CLAP_STAGE_AT, 0L));
+        result.put("noise", p.getFloat(ClapDetectionService.PREF_CLAP_NOISE, 0f));
+        return result;
     }
 
     @PluginMethod
     public void setClapSensitivity(PluginCall call) {
         String sensitivity = normalizeSensitivity(call.getString("sensitivity"));
-        if (sensitivity == null) {
-            call.reject("Sensibilité invalide. Valeurs possibles : low, normal, high");
-            return;
-        }
-
-        boolean enabled = prefs().getBoolean(ClapDetectionService.PREF_CLAP_ENABLED, false);
+        if (sensitivity == null) { call.reject("Sensibilité invalide. Valeurs possibles : low, normal, high"); return; }
         prefs().edit().putString(ClapDetectionService.PREF_CLAP_SENSITIVITY, sensitivity).apply();
-
-        JSObject result = new JSObject();
-        result.put("enabled", enabled);
-        result.put("sensitivity", sensitivity);
-        call.resolve(result);
+        call.resolve(buildClapStatus());
     }
 
     @PluginMethod
     public void startClapProfileTraining(PluginCall call) {
-        if (!hasMicrophonePermission()) {
-            call.reject("PERMISSION_MICRO_REQUIRED");
-            return;
-        }
-
+        if (!hasMicrophonePermission()) { call.reject("PERMISSION_MICRO_REQUIRED"); return; }
         try {
-            boolean activationAlreadyEnabled = prefs()
-                    .getBoolean(ClapDetectionService.PREF_CLAP_ENABLED, false);
-
+            boolean activationAlreadyEnabled = prefs().getBoolean(ClapDetectionService.PREF_CLAP_ENABLED, false);
             Intent service = new Intent(getContext(), ClapDetectionService.class);
             service.setAction(ClapDetectionService.ACTION_TRAIN_PROFILE);
             service.putExtra(ClapDetectionService.EXTRA_TRAINING_ONLY, !activationAlreadyEnabled);
             ContextCompat.startForegroundService(getContext(), service);
-
-            JSObject result = buildProfileStatus();
-            result.put("started", true);
-            call.resolve(result);
-        } catch (Exception e) {
-            call.reject("Impossible de démarrer l'apprentissage : " + e.getMessage());
-        }
+            JSObject result = buildProfileStatus(); result.put("started", true); call.resolve(result);
+        } catch (Exception e) { call.reject("Impossible de démarrer l'apprentissage : " + e.getMessage()); }
     }
 
     @PluginMethod
-    public void getClapProfileStatus(PluginCall call) {
-        call.resolve(buildProfileStatus());
-    }
+    public void getClapProfileStatus(PluginCall call) { call.resolve(buildProfileStatus()); }
 
     @PluginMethod
     public void setPersonalClapMode(PluginCall call) {
         Boolean enabled = call.getBoolean("enabled");
-        if (enabled == null) {
-            call.reject("Paramètre enabled manquant");
-            return;
-        }
-
-        if (enabled && !prefs().getBoolean(ClapDetectionService.PREF_PROFILE_TRAINED, false)) {
-            call.reject("Il faut d'abord apprendre ton profil de claquement");
-            return;
-        }
-
+        if (enabled == null) { call.reject("Paramètre enabled manquant"); return; }
+        if (enabled && !prefs().getBoolean(ClapDetectionService.PREF_PROFILE_TRAINED, false)) { call.reject("Il faut d'abord apprendre ton profil de claquement"); return; }
         prefs().edit().putBoolean(ClapDetectionService.PREF_PROFILE_ENABLED, enabled).apply();
         call.resolve(buildProfileStatus());
     }
@@ -451,7 +273,6 @@ public class AppLauncherPlugin extends Plugin {
                 .putBoolean(ClapDetectionService.PREF_PROFILE_TRAINING, false)
                 .putInt(ClapDetectionService.PREF_PROFILE_TRAINING_COUNT, 0)
                 .apply();
-
         call.resolve(buildProfileStatus());
     }
 
@@ -467,19 +288,13 @@ public class AppLauncherPlugin extends Plugin {
     }
 
     private boolean hasMicrophonePermission() {
-        return ContextCompat.checkSelfPermission(getContext(), Manifest.permission.RECORD_AUDIO)
-                == PackageManager.PERMISSION_GRANTED;
+        return ContextCompat.checkSelfPermission(getContext(), Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
     }
 
-    private SharedPreferences prefs() {
-        return getContext().getSharedPreferences(ClapDetectionService.PREFS, 0);
-    }
+    private SharedPreferences prefs() { return getContext().getSharedPreferences(ClapDetectionService.PREFS, 0); }
 
     private String getSavedSensitivity() {
-        String saved = prefs().getString(
-                ClapDetectionService.PREF_CLAP_SENSITIVITY,
-                ClapDetectionService.SENSITIVITY_NORMAL
-        );
+        String saved = prefs().getString(ClapDetectionService.PREF_CLAP_SENSITIVITY, ClapDetectionService.SENSITIVITY_NORMAL);
         String normalized = normalizeSensitivity(saved);
         return normalized == null ? ClapDetectionService.SENSITIVITY_NORMAL : normalized;
     }
@@ -487,11 +302,7 @@ public class AppLauncherPlugin extends Plugin {
     private String normalizeSensitivity(String value) {
         if (value == null) return null;
         String normalized = value.trim().toLowerCase();
-        if (ClapDetectionService.SENSITIVITY_LOW.equals(normalized)
-                || ClapDetectionService.SENSITIVITY_NORMAL.equals(normalized)
-                || ClapDetectionService.SENSITIVITY_HIGH.equals(normalized)) {
-            return normalized;
-        }
+        if (ClapDetectionService.SENSITIVITY_LOW.equals(normalized) || ClapDetectionService.SENSITIVITY_NORMAL.equals(normalized) || ClapDetectionService.SENSITIVITY_HIGH.equals(normalized)) return normalized;
         return null;
     }
 }
