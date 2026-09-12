@@ -32,7 +32,7 @@
     if (typeof window.openSettingsPanel === 'function') {
       window.openSettingsPanel();
       setTimeout(() => {
-        if (typeof window.refreshPersonalClapStatus === 'function') window.refreshPersonalClapStatus();
+        if (typeof window.refreshTikowikoAssistantStatus === 'function') window.refreshTikowikoAssistantStatus();
       }, 0);
     }
   }
@@ -120,7 +120,7 @@
           </button>
           <button class="menu-tile" id="menuSettings">
             <span class="menu-icon">⚙</span>
-            <span><span class="menu-label">Réglages</span><span class="menu-sub">Claquement, sensibilité et profil</span></span>
+            <span><span class="menu-label">Réglages</span><span class="menu-sub">Assistant Android et préférences</span></span>
           </button>
           <button class="menu-tile" id="menuHelp">
             <span class="menu-icon">?</span>
@@ -153,6 +153,14 @@
       directCall.async = false;
       directCall.dataset.tikowikoDirectCall = '1';
       document.body.appendChild(directCall);
+    }
+
+    if (!document.querySelector('script[data-tikowiko-assistant-setup]')) {
+      const assistantSetup = document.createElement('script');
+      assistantSetup.src = 'assistant-setup.js';
+      assistantSetup.async = false;
+      assistantSetup.dataset.tikowikoAssistantSetup = '1';
+      document.body.appendChild(assistantSetup);
     }
   }
 
