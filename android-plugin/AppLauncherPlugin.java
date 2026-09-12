@@ -115,9 +115,11 @@ public class AppLauncherPlugin extends Plugin {
     public void getAssistantStatus(PluginCall call) {
         JSObject result = new JSObject();
         try {
+            // Le nom de cette clé Secure n'est pas exposé comme constante publique sur
+            // toutes les versions du SDK Android, on utilise donc sa clé système stable.
             String assistant = Settings.Secure.getString(
                     getContext().getContentResolver(),
-                    Settings.Secure.ASSISTANT
+                    "assistant"
             );
             ComponentName selected = assistant == null || assistant.isEmpty()
                     ? null
