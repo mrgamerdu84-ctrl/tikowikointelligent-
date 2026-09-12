@@ -83,7 +83,6 @@
 
     const actions = document.querySelector('.header-actions');
     if (actions) {
-      // Remplace la longue rangée Applis / Courses / Aide / Réglages par un seul bouton.
       actions.innerHTML = '';
       const btn = document.createElement('button');
       btn.className = 'main-menu-button';
@@ -139,9 +138,21 @@
     document.getElementById('menuHelp').onclick = goHelp;
   }
 
+  function loadSpeechFix() {
+    if (document.querySelector('script[data-tikowiko-speech-fix]')) return;
+    const script = document.createElement('script');
+    script.src = 'speech-fix.js';
+    script.dataset.tikowikoSpeechFix = '1';
+    document.body.appendChild(script);
+  }
+
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', installMenu);
+    document.addEventListener('DOMContentLoaded', () => {
+      installMenu();
+      loadSpeechFix();
+    });
   } else {
     installMenu();
+    loadSpeechFix();
   }
 })();
