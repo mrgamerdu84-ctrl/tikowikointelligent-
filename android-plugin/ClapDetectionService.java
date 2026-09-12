@@ -7,7 +7,6 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
-import android.content.SharedPreferences;
 import android.media.AudioFormat;
 import android.media.AudioRecord;
 import android.media.MediaRecorder;
@@ -26,6 +25,11 @@ import androidx.core.app.NotificationCompat;
 public class ClapDetectionService extends Service {
     public static final String PREFS = "tikowiko_settings";
     public static final String PREF_CLAP_ENABLED = "clap_enabled";
+    public static final String PREF_CLAP_SENSITIVITY = "clap_sensitivity";
+
+    public static final String SENSITIVITY_LOW = "low";
+    public static final String SENSITIVITY_NORMAL = "normal";
+    public static final String SENSITIVITY_HIGH = "high";
 
     private static final String CHANNEL_ID = "clap_activation";
     private static final int NOTIFICATION_ID = 2401;
@@ -101,16 +105,43 @@ public class ClapDetectionService extends Service {
             }
 
             double rms = Math.sqrt(sumSquares / (double) read);
-            // Le bruit ambiant s'adapte lentement, mais pas pendant un pic fort.
             if (peak < noiseFloor * 2.2) {
                 noiseFloor = noiseFloor * 0.96 + rms * 0.04;
                 noiseFloor = Math.max(350.0, Math.min(noiseFloor, 5000.0));
             }
 
-            // Un claquement est un son bref avec un pic nettement supérieur à son RMS.
-            double threshold = Math.max(6500.0, noiseFloor * 4.0);
-            boolean sharpTransient = peak > threshold && peak > rms * 2.2;
+            DetectionProfile profile = getDetectionProfile();
+            double threshold = Math.max(profile.minimumPeak, noiseFloor * profile.noiseMultiplier);
+            boolean sharpTransient = peak > threshold && peak > rms * profile.transientRatio;
             if (sharpTransient) onClapCandidate();
+        }
+    }
+
+    private DetectionProfile getDetectionProfile() {
+        String sensitivity = getSharedPreferences(PREFS, MODE_PRIVATE)
+                .getString(PREF_CLAP_SENSITIVITY, SENSITIVITY_NORMAL);
+
+        if (SENSITIVITY_LOW.equals(sensitivity)) {
+            // Faible : demande un claquement plus franc, donc moins de faux déclenchements.
+            return new DetectionProfile(9000.0, 5.0, 2.5);
+        }
+        if (SENSITIVITY_HIGH.equals(sensitivity)) {
+            // Forte : détecte des claquements plus légers, mais peut réagir davantage aux bruits secs.
+            return new DetectionProfile(4200.0, 3.0, 1.9);
+        }
+        // Normale : compromis par défaut.
+        return new DetectionProfile(6500.0, 4.0, 2.2);
+    }
+
+    private static class DetectionProfile {
+        final double minimumPeak;
+        final double noiseMultiplier;
+        final double transientRatio;
+
+        DetectionProfile(double minimumPeak, double noiseMultiplier, double transientRatio) {
+            this.minimumPeak = minimumPeak;
+            this.noiseMultiplier = noiseMultiplier;
+            this.transientRatio = transientRatio;
         }
     }
 
