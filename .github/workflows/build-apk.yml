@@ -6,7 +6,7 @@ on:
     branches: [main]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build-apk:
@@ -89,10 +89,14 @@ jobs:
           mkdir -p dist
           cp android/app/build/outputs/apk/debug/app-debug.apk dist/Tikowikointelligent-debug.apk
 
-      - name: Publier l'artefact APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: Tikowikointelligent-APK
-          path: dist/Tikowikointelligent-debug.apk
-          if-no-files-found: error
-          retention-days: 30
+      - name: Publier l'APK dans la Release GitHub
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete apk-latest --cleanup-tag -y --repo "$GITHUB_REPOSITORY" 2>/dev/null || true
+          gh release create apk-latest \
+            dist/Tikowikointelligent-debug.apk \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "Tikowikointelligent — APK" \
+            --notes "Dernière version APK debug de Tikowikointelligent, générée automatiquement par GitHub Actions."
