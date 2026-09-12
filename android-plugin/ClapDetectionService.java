@@ -20,16 +20,16 @@ import androidx.core.app.NotificationCompat;
 
 /**
  * Détection locale d'un double claquement de mains.
- *
- * Le profil personnel n'est PAS une biométrie ni une preuve d'identité : il apprend
- * seulement quelques caractéristiques acoustiques des claquements de l'utilisateur
- * afin de réduire les faux déclenchements. Aucun échantillon audio n'est sauvegardé
- * ou envoyé : seuls quelques nombres (ratios moyens) restent dans SharedPreferences.
+ * Aucun échantillon audio n'est sauvegardé ou envoyé : seuls quelques nombres
+ * et états de diagnostic restent dans SharedPreferences.
  */
 public class ClapDetectionService extends Service {
     public static final String PREFS = "tikowiko_settings";
     public static final String PREF_CLAP_ENABLED = "clap_enabled";
     public static final String PREF_CLAP_SENSITIVITY = "clap_sensitivity";
+    public static final String PREF_CLAP_STAGE = "clap_stage";
+    public static final String PREF_CLAP_STAGE_AT = "clap_stage_at";
+    public static final String PREF_CLAP_NOISE = "clap_noise";
 
     public static final String PREF_PROFILE_TRAINED = "clap_profile_trained";
     public static final String PREF_PROFILE_ENABLED = "clap_profile_enabled";
@@ -59,7 +59,7 @@ public class ClapDetectionService extends Service {
     private Thread worker;
     private long firstClapAt = 0L;
     private long lastCandidateAt = 0L;
-    private double noiseFloor = 450.0;
+    private double noiseFloor = 420.0;
 
     private int trainingCount = 0;
     private double trainingSumF1 = 0.0;
@@ -77,8 +77,6 @@ public class ClapDetectionService extends Service {
         SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         boolean wantsTraining = intent != null && ACTION_TRAIN_PROFILE.equals(intent.getAction());
 
-        // START_STICKY peut relancer le service avec intent == null. Si l'utilisateur
-        // l'avait réellement désactivé, on ne le réactive pas tout seul.
         if (intent == null && !prefs.getBoolean(PREF_CLAP_ENABLED, false)) {
             stopSelf();
             return START_NOT_STICKY;
@@ -87,10 +85,12 @@ public class ClapDetectionService extends Service {
         if (wantsTraining) {
             trainingOnly = intent.getBooleanExtra(EXTRA_TRAINING_ONLY, false);
             beginProfileTraining();
+            setStage("Apprentissage : 0/" + PROFILE_SAMPLE_TARGET);
             startForeground(NOTIFICATION_ID, buildNotification("Apprentissage de tes claquements : 0/" + PROFILE_SAMPLE_TARGET));
         } else {
             prefs.edit().putBoolean(PREF_CLAP_ENABLED, true).apply();
             trainingOnly = false;
+            setStage("Écoute active — fais 2 claquements rapprochés");
             startForeground(NOTIFICATION_ID, buildNotification("Double claquement actif — fais 2 claquements rapprochés"));
         }
 
@@ -123,7 +123,7 @@ public class ClapDetectionService extends Service {
 
         try {
             recorder = new AudioRecord(
-                    MediaRecorder.AudioSource.MIC,
+                    MediaRecorder.AudioSource.VOICE_RECOGNITION,
                     SAMPLE_RATE,
                     AudioFormat.CHANNEL_IN_MONO,
                     AudioFormat.ENCODING_PCM_16BIT,
@@ -131,12 +131,14 @@ public class ClapDetectionService extends Service {
             );
             if (recorder.getState() != AudioRecord.STATE_INITIALIZED) {
                 updateForegroundText("Micro indisponible pour le double claquement");
+                setStage("Micro indisponible");
                 stopSelf();
                 return;
             }
             recorder.startRecording();
         } catch (SecurityException e) {
             updateForegroundText("Autorisation micro nécessaire pour le claquement");
+            setStage("Permission micro nécessaire");
             stopSelf();
             return;
         }
@@ -162,15 +164,25 @@ public class ClapDetectionService extends Service {
             }
 
             double rms = Math.sqrt(sumSquares / (double) read);
-            if (peak < noiseFloor * 1.8) {
-                noiseFloor = noiseFloor * 0.97 + rms * 0.03;
-                noiseFloor = Math.max(250.0, Math.min(noiseFloor, 4000.0));
+            if (peak < noiseFloor * 1.7) {
+                noiseFloor = noiseFloor * 0.96 + rms * 0.04;
+                noiseFloor = Math.max(220.0, Math.min(noiseFloor, 3500.0));
             }
+
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                    .putFloat(PREF_CLAP_NOISE, (float) noiseFloor)
+                    .apply();
 
             DetectionProfile profile = getDetectionProfile();
             double threshold = Math.max(profile.minimumPeak, noiseFloor * profile.noiseMultiplier);
             boolean sharpTransient = peak > threshold && peak > rms * profile.transientRatio;
             if (sharpTransient) onClapCandidate(peak, rms);
+
+            if (firstClapAt != 0L && SystemClock.elapsedRealtime() - firstClapAt > 1500) {
+                firstClapAt = 0L;
+                setStage("Écoute active — premier claquement expiré");
+                updateForegroundText("Double claquement actif — recommence avec 2 claquements rapprochés");
+            }
         }
     }
 
@@ -179,12 +191,12 @@ public class ClapDetectionService extends Service {
                 .getString(PREF_CLAP_SENSITIVITY, SENSITIVITY_NORMAL);
 
         if (SENSITIVITY_LOW.equals(sensitivity)) {
-            return new DetectionProfile(6500.0, 4.0, 2.1);
+            return new DetectionProfile(5600.0, 3.6, 2.0);
         }
         if (SENSITIVITY_HIGH.equals(sensitivity)) {
-            return new DetectionProfile(1800.0, 2.0, 1.4);
+            return new DetectionProfile(1300.0, 1.7, 1.28);
         }
-        return new DetectionProfile(3500.0, 2.8, 1.7);
+        return new DetectionProfile(2700.0, 2.35, 1.5);
     }
 
     private static class DetectionProfile {
@@ -202,8 +214,7 @@ public class ClapDetectionService extends Service {
     private void onClapCandidate(int peak, double rms) {
         long now = SystemClock.elapsedRealtime();
 
-        // Un même claquement traverse plusieurs buffers : on ne le compte qu'une fois.
-        if (now - lastCandidateAt < 120) return;
+        if (now - lastCandidateAt < 170) return;
         lastCandidateAt = now;
 
         if (trainingProfile) {
@@ -211,30 +222,31 @@ public class ClapDetectionService extends Service {
             return;
         }
 
-        if (!matchesPersonalProfile(peak, rms)) return;
+        if (!matchesPersonalProfile(peak, rms)) {
+            setStage("Son détecté mais rejeté par le profil personnel");
+            return;
+        }
 
-        if (firstClapAt == 0L || now - firstClapAt > 1400) {
+        if (firstClapAt == 0L || now - firstClapAt > 1500) {
             firstClapAt = now;
+            setStage("1er claquement détecté");
             updateForegroundText("1er claquement détecté — fais le deuxième");
             return;
         }
 
         long gap = now - firstClapAt;
-        if (gap >= 130 && gap <= 1400) {
+        if (gap >= 170 && gap <= 1500) {
             firstClapAt = 0L;
+            setStage("Double claquement détecté — ouverture de Tikowiko");
             updateForegroundText("Double claquement détecté — ouverture de Tikowiko");
             openTikowiko();
         }
     }
 
     private double[] extractFeatures(int peak, double rms) {
-        double safeNoise = Math.max(noiseFloor, 250.0);
+        double safeNoise = Math.max(noiseFloor, 220.0);
         double safeRms = Math.max(rms, 1.0);
-
-        double f1 = peak / safeNoise;
-        double f2 = peak / safeRms;
-        double f3 = safeRms / safeNoise;
-        return new double[]{f1, f2, f3};
+        return new double[]{peak / safeNoise, peak / safeRms, safeRms / safeNoise};
     }
 
     private void collectTrainingSample(int peak, double rms) {
@@ -248,8 +260,8 @@ public class ClapDetectionService extends Service {
                 .putInt(PREF_PROFILE_TRAINING_COUNT, trainingCount)
                 .apply();
 
+        setStage("Apprentissage : " + trainingCount + "/" + PROFILE_SAMPLE_TARGET);
         updateForegroundText("Apprentissage de tes claquements : " + trainingCount + "/" + PROFILE_SAMPLE_TARGET);
-
         if (trainingCount >= PROFILE_SAMPLE_TARGET) finishProfileTraining();
     }
 
@@ -270,11 +282,9 @@ public class ClapDetectionService extends Service {
                 .apply();
 
         trainingProfile = false;
+        setStage("Profil appris — filtrage personnel actif");
         updateForegroundText("Profil de claquement appris — protection personnelle active");
-
-        if (trainingOnly) {
-            stopSelf();
-        }
+        if (trainingOnly) stopSelf();
     }
 
     private boolean matchesPersonalProfile(int peak, double rms) {
@@ -294,8 +304,8 @@ public class ClapDetectionService extends Service {
         double score = d1 * 0.35 + d2 * 0.45 + d3 * 0.20;
 
         String sensitivity = prefs.getString(PREF_CLAP_SENSITIVITY, SENSITIVITY_NORMAL);
-        double allowed = SENSITIVITY_LOW.equals(sensitivity) ? 0.42
-                : (SENSITIVITY_HIGH.equals(sensitivity) ? 0.82 : 0.62);
+        double allowed = SENSITIVITY_LOW.equals(sensitivity) ? 0.48
+                : (SENSITIVITY_HIGH.equals(sensitivity) ? 0.95 : 0.72);
         return score <= allowed;
     }
 
@@ -307,18 +317,22 @@ public class ClapDetectionService extends Service {
         try {
             startActivity(launch);
         } catch (Exception ignored) {
+            setStage("Double claquement reconnu — ouverture bloquée par Android");
             updateForegroundText("Double claquement reconnu — touche ici pour ouvrir Tikowiko");
         }
+    }
+
+    private void setStage(String stage) {
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                .putString(PREF_CLAP_STAGE, stage)
+                .putLong(PREF_CLAP_STAGE_AT, System.currentTimeMillis())
+                .apply();
     }
 
     private Notification buildNotification(String text) {
         Intent open = new Intent(this, MainActivity.class);
         PendingIntent pendingIntent = PendingIntent.getActivity(
-                this,
-                0,
-                open,
-                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
-        );
+                this, 0, open, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
 
         return new NotificationCompat.Builder(this, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.ic_btn_speak_now)
@@ -353,8 +367,7 @@ public class ClapDetectionService extends Service {
     public void onTaskRemoved(Intent rootIntent) {
         SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         if (!trainingOnly && prefs.getBoolean(PREF_CLAP_ENABLED, false)) {
-            // Le service est volontairement indépendant de l'écran principal : retirer
-            // Tikowiko des applications récentes ne doit pas désactiver l'écoute.
+            setStage("Toujours actif en arrière-plan");
             updateForegroundText("Double claquement toujours actif en arrière-plan");
         }
         super.onTaskRemoved(rootIntent);
@@ -374,8 +387,6 @@ public class ClapDetectionService extends Service {
             worker = null;
         }
 
-        // Ne pas effacer PREF_CLAP_ENABLED ici : Android peut détruire puis relancer un
-        // service START_STICKY. La désactivation volontaire est gérée par AppLauncherPlugin.
         getSharedPreferences(PREFS, MODE_PRIVATE).edit()
                 .putBoolean(PREF_PROFILE_TRAINING, false)
                 .apply();
