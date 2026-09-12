@@ -56,7 +56,7 @@
   .setting-card + .setting-card{margin-top:12px;}
   .setting-row{display:flex;align-items:center;justify-content:space-between;gap:18px;}
   .setting-title{font-size:15px;font-weight:600;}
-  .setting-status{font-size:12px;color:var(--accent);margin-top:4px;}
+  .setting-status{font-size:12px;color:var(--accent);margin-top:4px;line-height:1.4;}
   .setting-help{font-size:12.5px;color:var(--text-dim);line-height:1.5;margin:12px 0 0;}
   .switch{position:relative;width:50px;height:28px;flex:0 0 auto;}
   .switch input{opacity:0;width:0;height:0;}
@@ -69,6 +69,11 @@
   .select-row select{background:#242733;color:var(--text);border:1px solid rgba(255,255,255,.09);border-radius:10px;padding:8px 10px;font-size:13px;}
   .privacy-note{margin-top:14px;padding:12px 14px;border-radius:12px;background:rgba(111,214,201,.08);color:var(--text-dim);font-size:12px;line-height:1.45;}
   .example{margin-top:10px;padding:10px 12px;border-radius:10px;background:#242733;color:var(--text);font-size:12.5px;line-height:1.45;}
+  .profile-box{margin-top:16px;padding-top:15px;border-top:1px solid rgba(255,255,255,.07);}
+  .action-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;}
+  .action-btn{border:0;border-radius:10px;padding:9px 12px;background:var(--accent);color:#0b1211;font-size:12.5px;font-weight:600;}
+  .action-btn.secondary{background:#2a2d39;color:var(--text);}
+  .action-btn:disabled{opacity:.45;}
 </style>
 </head>
 <body>
@@ -80,7 +85,7 @@
     </div>
     <div class="header-actions">
       <button onclick="openAppsPanel()">Applis</button>
-      <button onclick="openSettingsPanel()">Réglages</button>
+      <button onclick="openSettingsPanel(); setTimeout(refreshPersonalClapStatus, 0)">Réglages</button>
     </div>
   </header>
 
@@ -130,8 +135,32 @@
           <option value="high">Forte</option>
         </select>
       </div>
+
+      <div class="profile-box">
+        <div class="setting-row">
+          <div>
+            <div class="setting-title">Profil personnel de claquement</div>
+            <div class="setting-status" id="personalClapStatus">Pas encore appris</div>
+          </div>
+          <label class="switch" aria-label="Utiliser mon profil personnel">
+            <input type="checkbox" id="personalClapToggle" onchange="togglePersonalClapMode(this.checked)" disabled>
+            <span class="slider"></span>
+          </label>
+        </div>
+        <p class="setting-help">
+          Appuie sur « Apprendre mes claquements », puis fais 6 claquements séparés, naturellement. Le téléphone conserve seulement une petite signature numérique des sons, pas l'enregistrement audio.
+        </p>
+        <div class="action-row">
+          <button class="action-btn" id="trainClapProfileBtn" onclick="startPersonalClapTraining()">Apprendre mes claquements</button>
+          <button class="action-btn secondary" id="resetClapProfileBtn" onclick="resetPersonalClapProfile()" disabled>Réinitialiser</button>
+        </div>
+        <div class="privacy-note">
+          Ce profil aide à réduire les déclenchements par d'autres bruits ou personnes, mais ce n'est pas une biométrie fiable à 100 % et il ne prouve pas l'identité d'une personne.
+        </div>
+      </div>
+
       <div class="privacy-note">
-        Confidentialité : la détection du claquement analyse uniquement l'intensité du son sur le téléphone. Elle n'enregistre pas les conversations et n'envoie pas les échantillons audio vers un serveur Tikowiko.
+        Confidentialité : la détection du claquement analyse uniquement l'intensité et quelques caractéristiques du son sur le téléphone. Elle n'enregistre pas les conversations et n'envoie pas les échantillons audio vers un serveur Tikowiko.
       </div>
     </div>
 
@@ -156,6 +185,7 @@
 </div>
 
 <script src="app.js"></script>
+<script src="personal-clap.js"></script>
 <script src="reminders.js"></script>
 </body>
 </html>
