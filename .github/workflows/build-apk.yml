@@ -120,14 +120,25 @@ jobs:
               raise SystemExit('Les images exactes Tikowiko ne sont pas encore présentes dans android-assets/')
 
           res = Path('android/app/src/main/res')
-          for folder in ['drawable', 'drawable-port', 'mipmap-hdpi', 'mipmap-mdpi', 'mipmap-xhdpi', 'mipmap-xxhdpi', 'mipmap-xxxhdpi']:
+          density_folders = ['mipmap-hdpi', 'mipmap-mdpi', 'mipmap-xhdpi', 'mipmap-xxhdpi', 'mipmap-xxxhdpi']
+          for folder in ['drawable', 'drawable-port', *density_folders]:
               (res / folder).mkdir(parents=True, exist_ok=True)
 
-          # Les octets source sont copiés tels quels. Android accepte le contenu JPEG même si
-          # l'usage final est une ressource graphique ; aucune retouche de l'image n'est faite ici.
+          # Retire uniquement les ressources générées par défaut qui portent les mêmes noms.
+          # Les fichiers Tikowiko sont ensuite copiés octet pour octet, sans retouche.
+          for path in [res / 'drawable' / 'splash.png', res / 'drawable-port' / 'splash.png']:
+              if path.exists():
+                  path.unlink()
+
+          for folder in density_folders:
+              for filename in ['ic_launcher.png', 'ic_launcher_round.png']:
+                  path = res / folder / filename
+                  if path.exists():
+                      path.unlink()
+
           shutil.copyfile(splash, res / 'drawable-port' / 'splash.jpg')
           shutil.copyfile(splash, res / 'drawable' / 'splash.jpg')
-          for folder in ['mipmap-hdpi', 'mipmap-mdpi', 'mipmap-xhdpi', 'mipmap-xxhdpi', 'mipmap-xxxhdpi']:
+          for folder in density_folders:
               shutil.copyfile(icon, res / folder / 'ic_launcher.jpg')
               shutil.copyfile(icon, res / folder / 'ic_launcher_round.jpg')
           PY
