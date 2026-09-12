@@ -1,6 +1,7 @@
 package com.tikowiko.intelligent;
 
 import android.Manifest;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -20,6 +21,7 @@ import android.os.Vibrator;
 import android.os.VibratorManager;
 import android.provider.CalendarContract;
 import android.provider.ContactsContract;
+import android.provider.Settings;
 
 import androidx.core.content.ContextCompat;
 
@@ -89,6 +91,51 @@ public class AppLauncherPlugin extends Plugin {
         call.resolve();
     }
 
+    /** Ouvre directement l'écran Android où l'utilisateur peut choisir son assistant numérique. */
+    @PluginMethod
+    public void openAssistantSettings(PluginCall call) {
+        try {
+            Intent intent = new Intent(Settings.ACTION_VOICE_INPUT_SETTINGS);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            if (intent.resolveActivity(getContext().getPackageManager()) == null) {
+                intent = new Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS);
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            }
+            getContext().startActivity(intent);
+            JSObject result = new JSObject();
+            result.put("opened", true);
+            call.resolve(result);
+        } catch (Exception e) {
+            call.reject("Impossible d'ouvrir les réglages de l'assistant : " + e.getMessage());
+        }
+    }
+
+    /** Indique si Tikowiko est actuellement l'assistant Android par défaut. */
+    @PluginMethod
+    public void getAssistantStatus(PluginCall call) {
+        JSObject result = new JSObject();
+        try {
+            String assistant = Settings.Secure.getString(
+                    getContext().getContentResolver(),
+                    Settings.Secure.ASSISTANT
+            );
+            ComponentName selected = assistant == null || assistant.isEmpty()
+                    ? null
+                    : ComponentName.unflattenFromString(assistant);
+            boolean isTikowiko = selected != null
+                    && getContext().getPackageName().equals(selected.getPackageName());
+
+            result.put("isDefault", isTikowiko);
+            result.put("selectedPackage", selected == null ? "" : selected.getPackageName());
+            call.resolve(result);
+        } catch (Exception e) {
+            result.put("isDefault", false);
+            result.put("selectedPackage", "");
+            result.put("statusUnavailable", true);
+            call.resolve(result);
+        }
+    }
+
     /**
      * Fait sonner et vibrer le téléphone pendant quelques secondes pour le retrouver.
      * Le volume d'alarme est temporairement augmenté puis restauré. Le mode Ne pas déranger
@@ -143,7 +190,6 @@ public class AppLauncherPlugin extends Plugin {
                 }
             }
 
-            // Allume brièvement l'écran sans contourner le verrouillage de sécurité.
             PowerManager powerManager = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
             if (powerManager != null && !powerManager.isInteractive()) {
                 PowerManager.WakeLock wakeLock = powerManager.newWakeLock(
@@ -201,14 +247,6 @@ public class AppLauncherPlugin extends Plugin {
         findPhoneAudioManager = null;
     }
 
-    /**
-     * Appel sécurisé :
-     * - si target ressemble à un numéro, ouvre ACTION_DIAL avec le numéro prérempli ;
-     * - sinon ouvre la recherche de contacts Android avec le nom demandé.
-     *
-     * L'application ne lance jamais ACTION_CALL directement : l'utilisateur garde la confirmation finale.
-     * Aucun accès global au carnet d'adresses n'est demandé.
-     */
     @PluginMethod
     public void openContactOrDialer(PluginCall call) {
         String target = call.getString("target");
