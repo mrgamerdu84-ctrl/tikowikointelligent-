@@ -1,8 +1,11 @@
 package com.tikowiko.intelligent;
 
+import android.Manifest;
 import android.content.Intent;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
+
+import androidx.core.content.ContextCompat;
 
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
@@ -13,16 +16,13 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 
 import java.util.List;
 
-// Plugin maison : liste les applications installées et les lance.
-// A copier dans : android/app/src/main/java/com/tikowiko/intelligent/AppLauncherPlugin.java
-// (le dossier doit correspondre au appId défini dans capacitor.config.json)
+// Plugin maison : liste/lance les applications et contrôle l'activation par double claquement.
 @CapacitorPlugin(name = "AppLauncher")
 public class AppLauncherPlugin extends Plugin {
 
     @PluginMethod
     public void getInstalledApps(PluginCall call) {
         PackageManager pm = getContext().getPackageManager();
-        // On ne garde que les applis qui ont un écran de lancement (pas les services système)
         Intent launchable = new Intent(Intent.ACTION_MAIN, null);
         launchable.addCategory(Intent.CATEGORY_LAUNCHER);
         List<android.content.pm.ResolveInfo> resolved = pm.queryIntentActivities(launchable, 0);
@@ -63,5 +63,51 @@ public class AppLauncherPlugin extends Plugin {
         launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         getContext().startActivity(launchIntent);
         call.resolve();
+    }
+
+    @PluginMethod
+    public void startClapActivation(PluginCall call) {
+        if (ContextCompat.checkSelfPermission(getContext(), Manifest.permission.RECORD_AUDIO)
+                != PackageManager.PERMISSION_GRANTED) {
+            call.reject("PERMISSION_MICRO_REQUIRED");
+            return;
+        }
+
+        try {
+            Intent service = new Intent(getContext(), ClapDetectionService.class);
+            ContextCompat.startForegroundService(getContext(), service);
+            JSObject result = new JSObject();
+            result.put("enabled", true);
+            call.resolve(result);
+        } catch (Exception e) {
+            call.reject("Impossible d'activer le double claquement : " + e.getMessage());
+        }
+    }
+
+    @PluginMethod
+    public void stopClapActivation(PluginCall call) {
+        try {
+            Intent service = new Intent(getContext(), ClapDetectionService.class);
+            getContext().stopService(service);
+            getContext().getSharedPreferences(ClapDetectionService.PREFS, 0)
+                    .edit().putBoolean(ClapDetectionService.PREF_CLAP_ENABLED, false).apply();
+
+            JSObject result = new JSObject();
+            result.put("enabled", false);
+            call.resolve(result);
+        } catch (Exception e) {
+            call.reject("Impossible de désactiver le double claquement : " + e.getMessage());
+        }
+    }
+
+    @PluginMethod
+    public void getClapActivationStatus(PluginCall call) {
+        boolean enabled = getContext()
+                .getSharedPreferences(ClapDetectionService.PREFS, 0)
+                .getBoolean(ClapDetectionService.PREF_CLAP_ENABLED, false);
+
+        JSObject result = new JSObject();
+        result.put("enabled", enabled);
+        call.resolve(result);
     }
 }
