@@ -70,6 +70,7 @@ jobs:
           service = '''        <service
               android:name=".ClapDetectionService"
               android:exported="false"
+              android:stopWithTask="false"
               android:foregroundServiceType="microphone" />\n'''
 
           if 'android:name=".ClapDetectionService"' not in text:
