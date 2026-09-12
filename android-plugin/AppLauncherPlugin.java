@@ -4,6 +4,7 @@ import android.Manifest;
 import android.content.Intent;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
+import android.provider.CalendarContract;
 
 import androidx.core.content.ContextCompat;
 
@@ -16,7 +17,8 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 
 import java.util.List;
 
-// Plugin maison : liste/lance les applications et contrôle l'activation par double claquement.
+// Plugin maison : liste/lance les applications, contrôle le double claquement
+// et prépare des rendez-vous dans l'agenda Android.
 @CapacitorPlugin(name = "AppLauncher")
 public class AppLauncherPlugin extends Plugin {
 
@@ -63,6 +65,47 @@ public class AppLauncherPlugin extends Plugin {
         launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         getContext().startActivity(launchIntent);
         call.resolve();
+    }
+
+    @PluginMethod
+    public void createCalendarEvent(PluginCall call) {
+        String title = call.getString("title");
+        Long startMillis = call.getLong("startMillis");
+        Long endMillis = call.getLong("endMillis");
+
+        if (title == null || title.trim().isEmpty()) {
+            call.reject("Titre du rendez-vous manquant");
+            return;
+        }
+        if (startMillis == null) {
+            call.reject("Date ou heure du rendez-vous manquante");
+            return;
+        }
+        if (endMillis == null || endMillis <= startMillis) {
+            endMillis = startMillis + 60L * 60L * 1000L;
+        }
+
+        try {
+            Intent intent = new Intent(Intent.ACTION_INSERT)
+                    .setData(CalendarContract.Events.CONTENT_URI)
+                    .putExtra(CalendarContract.Events.TITLE, title.trim())
+                    .putExtra(CalendarContract.EXTRA_EVENT_BEGIN_TIME, startMillis)
+                    .putExtra(CalendarContract.EXTRA_EVENT_END_TIME, endMillis);
+
+            if (intent.resolveActivity(getContext().getPackageManager()) == null) {
+                call.reject("Aucune application d'agenda compatible n'est installée");
+                return;
+            }
+
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            getContext().startActivity(intent);
+
+            JSObject result = new JSObject();
+            result.put("opened", true);
+            call.resolve(result);
+        } catch (Exception e) {
+            call.reject("Impossible d'ouvrir l'agenda : " + e.getMessage());
+        }
     }
 
     @PluginMethod
@@ -129,7 +172,6 @@ public class AppLauncherPlugin extends Plugin {
         getContext().getSharedPreferences(ClapDetectionService.PREFS, 0)
                 .edit().putString(ClapDetectionService.PREF_CLAP_SENSITIVITY, sensitivity).apply();
 
-        // Si l'écoute est déjà active, le service relit automatiquement ce réglage.
         JSObject result = new JSObject();
         result.put("enabled", enabled);
         result.put("sensitivity", sensitivity);
