@@ -83,14 +83,22 @@ function closeSettingsPanel() {
   document.getElementById('settingsPanel').classList.remove('open');
 }
 
+function sensitivityLabel(value) {
+  if (value === 'low') return 'Faible';
+  if (value === 'high') return 'Forte';
+  return 'Normale';
+}
+
 async function refreshClapStatus() {
   const toggle = document.getElementById('clapToggle');
   const status = document.getElementById('clapStatus');
-  if (!toggle || !status) return;
+  const sensitivity = document.getElementById('clapSensitivity');
+  if (!toggle || !status || !sensitivity) return;
 
   if (!AppLauncher || typeof AppLauncher.getClapActivationStatus !== 'function') {
     toggle.checked = false;
     toggle.disabled = true;
+    sensitivity.disabled = true;
     status.textContent = 'Disponible uniquement sur Android';
     return;
   }
@@ -98,11 +106,20 @@ async function refreshClapStatus() {
   try {
     const result = await AppLauncher.getClapActivationStatus();
     const enabled = !!result?.enabled;
+    const level = ['low', 'normal', 'high'].includes(result?.sensitivity)
+      ? result.sensitivity
+      : 'normal';
+
     toggle.checked = enabled;
     toggle.disabled = false;
-    status.textContent = enabled ? 'Activée — écoute locale en arrière-plan' : 'Désactivée';
+    sensitivity.disabled = false;
+    sensitivity.value = level;
+    status.textContent = enabled
+      ? `Activée — sensibilité ${sensitivityLabel(level).toLowerCase()}`
+      : `Désactivée — sensibilité ${sensitivityLabel(level).toLowerCase()}`;
   } catch (e) {
     toggle.checked = false;
+    sensitivity.value = 'normal';
     status.textContent = 'État indisponible';
   }
 }
@@ -110,7 +127,8 @@ async function refreshClapStatus() {
 async function toggleClapActivation(enabled) {
   const toggle = document.getElementById('clapToggle');
   const status = document.getElementById('clapStatus');
-  if (!toggle || !status || !AppLauncher) return;
+  const sensitivity = document.getElementById('clapSensitivity');
+  if (!toggle || !status || !sensitivity || !AppLauncher) return;
 
   toggle.disabled = true;
   status.textContent = enabled ? 'Activation…' : 'Désactivation…';
@@ -120,11 +138,11 @@ async function toggleClapActivation(enabled) {
       const granted = await ensureMicrophonePermission();
       if (!granted) throw new Error('Permission micro refusée');
       await AppLauncher.startClapActivation();
-      status.textContent = 'Activée — fais deux claquements rapprochés';
+      status.textContent = `Activée — sensibilité ${sensitivityLabel(sensitivity.value).toLowerCase()}`;
       addBubble('Activation par double claquement activée.', 'system');
     } else {
       await AppLauncher.stopClapActivation();
-      status.textContent = 'Désactivée';
+      status.textContent = `Désactivée — sensibilité ${sensitivityLabel(sensitivity.value).toLowerCase()}`;
       addBubble('Activation par double claquement désactivée.', 'system');
     }
   } catch (e) {
@@ -133,6 +151,30 @@ async function toggleClapActivation(enabled) {
     addBubble('Impossible de modifier le double claquement : ' + (e?.message || e), 'system error');
   } finally {
     toggle.disabled = false;
+  }
+}
+
+async function setClapSensitivity(value) {
+  const sensitivity = document.getElementById('clapSensitivity');
+  const status = document.getElementById('clapStatus');
+  const toggle = document.getElementById('clapToggle');
+  if (!sensitivity || !status || !toggle || !AppLauncher) return;
+
+  const allowed = ['low', 'normal', 'high'];
+  const level = allowed.includes(value) ? value : 'normal';
+  sensitivity.disabled = true;
+
+  try {
+    await AppLauncher.setClapSensitivity({ sensitivity: level });
+    status.textContent = toggle.checked
+      ? `Activée — sensibilité ${sensitivityLabel(level).toLowerCase()}`
+      : `Désactivée — sensibilité ${sensitivityLabel(level).toLowerCase()}`;
+    addBubble(`Sensibilité du double claquement : ${sensitivityLabel(level)}.`, 'system');
+  } catch (e) {
+    addBubble('Impossible de changer la sensibilité : ' + (e?.message || e), 'system error');
+    await refreshClapStatus();
+  } finally {
+    sensitivity.disabled = false;
   }
 }
 
