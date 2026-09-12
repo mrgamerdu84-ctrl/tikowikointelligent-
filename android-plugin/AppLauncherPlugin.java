@@ -5,7 +5,9 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
+import android.net.Uri;
 import android.provider.CalendarContract;
+import android.provider.ContactsContract;
 
 import androidx.core.content.ContextCompat;
 
@@ -18,8 +20,8 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 
 import java.util.List;
 
-// Plugin maison : lance les applications, prépare les rendez-vous et contrôle
-// la détection locale / le profil personnel de claquement.
+// Plugin maison : lance les applications, prépare les rendez-vous, ouvre les contacts / le composeur
+// et contrôle la détection locale / le profil personnel de claquement.
 @CapacitorPlugin(name = "AppLauncher")
 public class AppLauncherPlugin extends Plugin {
 
@@ -66,6 +68,56 @@ public class AppLauncherPlugin extends Plugin {
         launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         getContext().startActivity(launchIntent);
         call.resolve();
+    }
+
+    /**
+     * Appel sécurisé :
+     * - si target ressemble à un numéro, ouvre ACTION_DIAL avec le numéro prérempli ;
+     * - sinon ouvre la recherche de contacts Android avec le nom demandé.
+     *
+     * L'application ne lance jamais ACTION_CALL directement : l'utilisateur garde la confirmation finale.
+     * Aucun accès global au carnet d'adresses n'est demandé.
+     */
+    @PluginMethod
+    public void openContactOrDialer(PluginCall call) {
+        String target = call.getString("target");
+        if (target == null || target.trim().isEmpty()) {
+            call.reject("Contact ou numéro manquant");
+            return;
+        }
+
+        String value = target.trim();
+        Intent intent;
+        String mode;
+
+        if (value.matches("^[+0-9][0-9 .()\\-]{3,}$")) {
+            String number = value.replaceAll("[^0-9+]", "");
+            intent = new Intent(Intent.ACTION_DIAL, Uri.fromParts("tel", number, null));
+            mode = "dialer";
+        } else {
+            Uri searchUri = Uri.withAppendedPath(
+                    ContactsContract.Contacts.CONTENT_FILTER_URI,
+                    Uri.encode(value)
+            );
+            intent = new Intent(Intent.ACTION_VIEW, searchUri);
+            mode = "contact-search";
+        }
+
+        if (intent.resolveActivity(getContext().getPackageManager()) == null) {
+            call.reject("Aucune application Téléphone/Contacts compatible n'est disponible");
+            return;
+        }
+
+        try {
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            getContext().startActivity(intent);
+            JSObject result = new JSObject();
+            result.put("opened", true);
+            result.put("mode", mode);
+            call.resolve(result);
+        } catch (Exception e) {
+            call.reject("Impossible d'ouvrir le téléphone : " + e.getMessage());
+        }
     }
 
     @PluginMethod
