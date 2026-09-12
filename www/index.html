@@ -93,7 +93,7 @@
   <main id="log"></main>
 
   <footer>
-    <div id="hint">Dis « ouvre YouTube », « appelle Maman », « ajoute du lait à ma liste » ou « rendez-vous dentiste demain à 14 h »</div>
+    <div id="hint">Dis « ouvre YouTube », même avec un nom approximatif, « appelle Maman », « ajoute du lait à ma liste » ou « rendez-vous dentiste demain à 14 h »</div>
     <button id="mic" onclick="toggleListening()" aria-label="Activer le microphone">
       <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg>
     </button>
@@ -122,8 +122,8 @@
 
     <div class="setting-card">
       <div class="setting-title">Ouvrir les applications</div>
-      <p class="setting-help">Lance les applications installées avec une commande vocale.</p>
-      <div class="example">« Ouvre YouTube » · « Lance Spotify »</div>
+      <p class="setting-help">Lance les applications installées avec une commande vocale. Le nom peut être incomplet ou légèrement mal reconnu.</p>
+      <div class="example">« Ouvre YouTube » · « Ouvre-moi YouTube » · « Lance Spoti »</div>
     </div>
 
     <div class="setting-card">
@@ -134,15 +134,15 @@
     </div>
 
     <div class="setting-card">
-      <div class="setting-title">Appels sécurisés</div>
-      <p class="setting-help">Ouvre un contact ou le composeur sans lancer silencieusement l'appel. Un appel futur peut être transformé en rappel.</p>
+      <div class="setting-title">Appels directs</div>
+      <p class="setting-help">Avec les permissions Contacts et Téléphone, « Appelle Maman » peut rechercher le numéro du contact et lancer directement l'appel. Un appel futur reste un rappel dans l'agenda.</p>
       <div class="example">« Appelle Maman » · « Jeudi à 18 h appelle Maman »</div>
     </div>
 
     <div class="setting-card">
       <div class="setting-title">Liste de courses</div>
       <p class="setting-help">Ajoute, retire, consulte, coche ou vide les courses. La liste reste enregistrée localement sur le téléphone.</p>
-      <div class="example">« Ajoute lait, œufs et pain à ma liste de courses »</div>
+      <div class="example">« Ouvre ma liste de courses » · « Ajoute lait, œufs et pain à ma liste de courses »</div>
     </div>
 
     <div class="setting-card">
@@ -240,9 +240,9 @@
     </div>
 
     <div class="setting-card">
-      <div class="setting-title">Appels sécurisés</div>
+      <div class="setting-title">Appels directs</div>
       <p class="setting-help">
-        « Appelle Maman » ouvre le contact correspondant, et « appelle 06… » ouvre le composeur avec le numéro déjà rempli. Tikowikointelligent ne lance pas un appel silencieusement : tu gardes la confirmation finale.
+        Avec les permissions nécessaires, « Appelle Maman » recherche le numéro du contact et lance l'appel directement. Une commande avec une date et une heure prépare seulement un rappel.
       </p>
       <div class="example">Exemple : « Appelle Maman »</div>
       <div class="example">Exemple : « Jeudi à 18 h appelle Maman » — prépare un rappel dans l'agenda.</div>
@@ -253,6 +253,7 @@
       <p class="setting-help">
         La liste reste enregistrée uniquement sur ce téléphone. Tu peux l'ajouter, la lire, retirer des articles ou la vider à la voix.
       </p>
+      <div class="example">Exemple : « Ouvre ma liste de courses »</div>
       <div class="example">Exemple : « Ajoute lait, œufs et pain à ma liste de courses »</div>
       <div class="example">Exemple : « Enlève les tomates de ma liste de courses »</div>
     </div>
@@ -260,6 +261,7 @@
 </div>
 
 <script src="app.js"></script>
+<script src="app-fuzzy.js"></script>
 <script src="personal-clap.js"></script>
 <script src="reminders.js"></script>
 <script src="assistant-actions.js"></script>
