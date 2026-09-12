@@ -78,6 +78,7 @@ public class AppLauncherPlugin extends Plugin {
             ContextCompat.startForegroundService(getContext(), service);
             JSObject result = new JSObject();
             result.put("enabled", true);
+            result.put("sensitivity", getSavedSensitivity());
             call.resolve(result);
         } catch (Exception e) {
             call.reject("Impossible d'activer le double claquement : " + e.getMessage());
@@ -94,6 +95,7 @@ public class AppLauncherPlugin extends Plugin {
 
             JSObject result = new JSObject();
             result.put("enabled", false);
+            result.put("sensitivity", getSavedSensitivity());
             call.resolve(result);
         } catch (Exception e) {
             call.reject("Impossible de désactiver le double claquement : " + e.getMessage());
@@ -108,6 +110,48 @@ public class AppLauncherPlugin extends Plugin {
 
         JSObject result = new JSObject();
         result.put("enabled", enabled);
+        result.put("sensitivity", getSavedSensitivity());
         call.resolve(result);
+    }
+
+    @PluginMethod
+    public void setClapSensitivity(PluginCall call) {
+        String sensitivity = normalizeSensitivity(call.getString("sensitivity"));
+        if (sensitivity == null) {
+            call.reject("Sensibilité invalide. Valeurs possibles : low, normal, high");
+            return;
+        }
+
+        boolean enabled = getContext()
+                .getSharedPreferences(ClapDetectionService.PREFS, 0)
+                .getBoolean(ClapDetectionService.PREF_CLAP_ENABLED, false);
+
+        getContext().getSharedPreferences(ClapDetectionService.PREFS, 0)
+                .edit().putString(ClapDetectionService.PREF_CLAP_SENSITIVITY, sensitivity).apply();
+
+        // Si l'écoute est déjà active, le service relit automatiquement ce réglage.
+        JSObject result = new JSObject();
+        result.put("enabled", enabled);
+        result.put("sensitivity", sensitivity);
+        call.resolve(result);
+    }
+
+    private String getSavedSensitivity() {
+        String saved = getContext()
+                .getSharedPreferences(ClapDetectionService.PREFS, 0)
+                .getString(ClapDetectionService.PREF_CLAP_SENSITIVITY, ClapDetectionService.SENSITIVITY_NORMAL);
+        String normalized = normalizeSensitivity(saved);
+        return normalized == null ? ClapDetectionService.SENSITIVITY_NORMAL : normalized;
+    }
+
+    private String normalizeSensitivity(String value) {
+        if (value == null) return null;
+        String normalized = value.trim().toLowerCase();
+        if (ClapDetectionService.SENSITIVITY_LOW.equals(normalized)
+                || ClapDetectionService.SENSITIVITY_NORMAL.equals(normalized)
+                || ClapDetectionService.SENSITIVITY_HIGH.equals(normalized)) {
+            return normalized;
+        }
+        return null;
     }
 }
