@@ -87,7 +87,7 @@
   <main id="log"></main>
 
   <footer>
-    <div id="hint">Dis « ouvre YouTube » ou « rendez-vous dentiste demain à 14 h »</div>
+    <div id="hint">Dis « ouvre YouTube », « rendez-vous dentiste demain à 14 h » ou « rappelle-moi d'acheter du pain demain à 18 h »</div>
     <button id="mic" onclick="toggleListening()" aria-label="Activer le microphone">
       <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg>
     </button>
@@ -143,9 +143,19 @@
       <div class="example">Exemple : « Ajoute rendez-vous médecin le 18 septembre à 14 h 30 »</div>
       <div class="example">Exemple : « J'ai rendez-vous chez le dentiste vendredi prochain à 10 h »</div>
     </div>
+
+    <div class="setting-card">
+      <div class="setting-title">Rappels vocaux</div>
+      <p class="setting-help">
+        Dis ce que tu veux te rappeler, avec une date et une heure. Tikowikointelligent prépare un rappel dans ton agenda Android, sans serveur Tikowiko.
+      </p>
+      <div class="example">Exemple : « Rappelle-moi d'acheter du pain demain à 18 h »</div>
+      <div class="example">Exemple : « Rappelle-moi de sortir la poubelle vendredi à 19 h »</div>
+    </div>
   </div>
 </div>
 
 <script src="app.js"></script>
+<script src="reminders.js"></script>
 </body>
 </html>
