@@ -77,6 +77,13 @@ public class ClapDetectionService extends Service {
         SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         boolean wantsTraining = intent != null && ACTION_TRAIN_PROFILE.equals(intent.getAction());
 
+        // START_STICKY peut relancer le service avec intent == null. Si l'utilisateur
+        // l'avait réellement désactivé, on ne le réactive pas tout seul.
+        if (intent == null && !prefs.getBoolean(PREF_CLAP_ENABLED, false)) {
+            stopSelf();
+            return START_NOT_STICKY;
+        }
+
         if (wantsTraining) {
             trainingOnly = intent.getBooleanExtra(EXTRA_TRAINING_ONLY, false);
             beginProfileTraining();
@@ -343,6 +350,17 @@ public class ClapDetectionService extends Service {
     }
 
     @Override
+    public void onTaskRemoved(Intent rootIntent) {
+        SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+        if (!trainingOnly && prefs.getBoolean(PREF_CLAP_ENABLED, false)) {
+            // Le service est volontairement indépendant de l'écran principal : retirer
+            // Tikowiko des applications récentes ne doit pas désactiver l'écoute.
+            updateForegroundText("Double claquement toujours actif en arrière-plan");
+        }
+        super.onTaskRemoved(rootIntent);
+    }
+
+    @Override
     public void onDestroy() {
         running = false;
         trainingProfile = false;
@@ -356,10 +374,11 @@ public class ClapDetectionService extends Service {
             worker = null;
         }
 
-        SharedPreferences.Editor editor = getSharedPreferences(PREFS, MODE_PRIVATE).edit()
-                .putBoolean(PREF_PROFILE_TRAINING, false);
-        if (!trainingOnly) editor.putBoolean(PREF_CLAP_ENABLED, false);
-        editor.apply();
+        // Ne pas effacer PREF_CLAP_ENABLED ici : Android peut détruire puis relancer un
+        // service START_STICKY. La désactivation volontaire est gérée par AppLauncherPlugin.
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                .putBoolean(PREF_PROFILE_TRAINING, false)
+                .apply();
         super.onDestroy();
     }
 
