@@ -38,12 +38,17 @@ jobs:
       - name: Installer les composants natifs Tikowiko
         run: |
           mkdir -p android/app/src/main/java/com/tikowiko/intelligent
+          mkdir -p android/app/src/main/res/xml
           cp android-plugin/AppLauncherPlugin.java android/app/src/main/java/com/tikowiko/intelligent/AppLauncherPlugin.java
           cp android-plugin/DirectCallPlugin.java android/app/src/main/java/com/tikowiko/intelligent/DirectCallPlugin.java
           cp android-plugin/ClapDetectionService.java android/app/src/main/java/com/tikowiko/intelligent/ClapDetectionService.java
+          cp android-plugin/TikowikoVoiceInteractionService.java android/app/src/main/java/com/tikowiko/intelligent/TikowikoVoiceInteractionService.java
+          cp android-plugin/TikowikoVoiceInteractionSessionService.java android/app/src/main/java/com/tikowiko/intelligent/TikowikoVoiceInteractionSessionService.java
+          cp android-plugin/TikowikoVoiceInteractionSession.java android/app/src/main/java/com/tikowiko/intelligent/TikowikoVoiceInteractionSession.java
+          cp android-plugin/voice_interaction_service.xml android/app/src/main/res/xml/voice_interaction_service.xml
           cp android-plugin/MainActivity-snippet.java android/app/src/main/java/com/tikowiko/intelligent/MainActivity.java
 
-      - name: Ajouter les permissions et le service Android
+      - name: Ajouter les permissions et les services Android
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -67,14 +72,35 @@ jobs:
               if permission not in text:
                   text = text.replace('<application', permission + '\n\n    <application', 1)
 
-          service = '''        <service
+          clap_service = '''        <service
               android:name=".ClapDetectionService"
               android:exported="false"
               android:stopWithTask="false"
               android:foregroundServiceType="microphone" />\n'''
 
           if 'android:name=".ClapDetectionService"' not in text:
-              text = text.replace('    </application>', service + '    </application>', 1)
+              text = text.replace('    </application>', clap_service + '    </application>', 1)
+
+          assistant_services = '''        <service
+              android:name=".TikowikoVoiceInteractionService"
+              android:permission="android.permission.BIND_VOICE_INTERACTION"
+              android:exported="true">
+              <intent-filter>
+                  <action android:name="android.service.voice.VoiceInteractionService" />
+              </intent-filter>
+              <meta-data
+                  android:name="android.voice_interaction"
+                  android:resource="@xml/voice_interaction_service" />
+          </service>
+
+          <service
+              android:name=".TikowikoVoiceInteractionSessionService"
+              android:permission="android.permission.BIND_VOICE_INTERACTION"
+              android:exported="true"
+              android:process=":voice_session" />\n'''
+
+          if 'android:name=".TikowikoVoiceInteractionService"' not in text:
+              text = text.replace('    </application>', assistant_services + '    </application>', 1)
 
           manifest.write_text(text, encoding='utf-8')
           PY
