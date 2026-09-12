@@ -1,11 +1,23 @@
 package com.tikowiko.intelligent;
 
 import android.Manifest;
+import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
+import android.media.AudioAttributes;
+import android.media.AudioManager;
+import android.media.Ringtone;
+import android.media.RingtoneManager;
 import android.net.Uri;
+import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.PowerManager;
+import android.os.VibrationEffect;
+import android.os.Vibrator;
+import android.os.VibratorManager;
 import android.provider.CalendarContract;
 import android.provider.ContactsContract;
 
@@ -20,10 +32,17 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 
 import java.util.List;
 
-// Plugin maison : lance les applications, prépare les rendez-vous, ouvre les contacts / le composeur
-// et contrôle la détection locale / le profil personnel de claquement.
+// Plugin maison : lance les applications, prépare les rendez-vous, ouvre les contacts / le composeur,
+// aide à retrouver le téléphone et contrôle la détection locale / le profil personnel de claquement.
 @CapacitorPlugin(name = "AppLauncher")
 public class AppLauncherPlugin extends Plugin {
+
+    private final Handler findPhoneHandler = new Handler(Looper.getMainLooper());
+    private Ringtone findPhoneRingtone;
+    private Vibrator findPhoneVibrator;
+    private AudioManager findPhoneAudioManager;
+    private Integer previousAlarmVolume;
+    private final Runnable stopFindPhoneRunnable = this::stopFindPhoneInternal;
 
     @PluginMethod
     public void getInstalledApps(PluginCall call) {
@@ -68,6 +87,118 @@ public class AppLauncherPlugin extends Plugin {
         launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         getContext().startActivity(launchIntent);
         call.resolve();
+    }
+
+    /**
+     * Fait sonner et vibrer le téléphone pendant quelques secondes pour le retrouver.
+     * Le volume d'alarme est temporairement augmenté puis restauré. Le mode Ne pas déranger
+     * reste sous le contrôle d'Android : Tikowiko ne cherche pas à le contourner.
+     */
+    @PluginMethod
+    public void findMyPhone(PluginCall call) {
+        Integer requestedSeconds = call.getInt("seconds");
+        int seconds = requestedSeconds == null ? 12 : Math.max(5, Math.min(requestedSeconds, 30));
+
+        try {
+            stopFindPhoneInternal();
+
+            Context context = getContext();
+            findPhoneAudioManager = (AudioManager) context.getSystemService(Context.AUDIO_SERVICE);
+            if (findPhoneAudioManager != null) {
+                previousAlarmVolume = findPhoneAudioManager.getStreamVolume(AudioManager.STREAM_ALARM);
+                int max = findPhoneAudioManager.getStreamMaxVolume(AudioManager.STREAM_ALARM);
+                findPhoneAudioManager.setStreamVolume(AudioManager.STREAM_ALARM, max, 0);
+            }
+
+            Uri sound = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM);
+            if (sound == null) sound = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE);
+            if (sound == null) sound = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
+
+            if (sound != null) {
+                findPhoneRingtone = RingtoneManager.getRingtone(context, sound);
+                if (findPhoneRingtone != null) {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                        findPhoneRingtone.setAudioAttributes(new AudioAttributes.Builder()
+                                .setUsage(AudioAttributes.USAGE_ALARM)
+                                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                                .build());
+                    }
+                    findPhoneRingtone.play();
+                }
+            }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                VibratorManager manager = (VibratorManager) context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE);
+                findPhoneVibrator = manager == null ? null : manager.getDefaultVibrator();
+            } else {
+                findPhoneVibrator = (Vibrator) context.getSystemService(Context.VIBRATOR_SERVICE);
+            }
+
+            if (findPhoneVibrator != null && findPhoneVibrator.hasVibrator()) {
+                long[] pattern = new long[]{0, 550, 250, 550, 250, 900};
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    findPhoneVibrator.vibrate(VibrationEffect.createWaveform(pattern, 0));
+                } else {
+                    findPhoneVibrator.vibrate(pattern, 0);
+                }
+            }
+
+            // Allume brièvement l'écran sans contourner le verrouillage de sécurité.
+            PowerManager powerManager = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
+            if (powerManager != null && !powerManager.isInteractive()) {
+                PowerManager.WakeLock wakeLock = powerManager.newWakeLock(
+                        PowerManager.SCREEN_BRIGHT_WAKE_LOCK | PowerManager.ACQUIRE_CAUSES_WAKEUP,
+                        "tikowiko:find-phone"
+                );
+                wakeLock.acquire(3000L);
+            }
+
+            findPhoneHandler.removeCallbacks(stopFindPhoneRunnable);
+            findPhoneHandler.postDelayed(stopFindPhoneRunnable, seconds * 1000L);
+
+            JSObject result = new JSObject();
+            result.put("started", true);
+            result.put("seconds", seconds);
+            call.resolve(result);
+        } catch (Exception e) {
+            stopFindPhoneInternal();
+            call.reject("Impossible de faire sonner le téléphone : " + e.getMessage());
+        }
+    }
+
+    @PluginMethod
+    public void stopFindMyPhone(PluginCall call) {
+        stopFindPhoneInternal();
+        JSObject result = new JSObject();
+        result.put("stopped", true);
+        call.resolve(result);
+    }
+
+    private void stopFindPhoneInternal() {
+        findPhoneHandler.removeCallbacks(stopFindPhoneRunnable);
+
+        if (findPhoneRingtone != null) {
+            try { findPhoneRingtone.stop(); } catch (Exception ignored) {}
+            findPhoneRingtone = null;
+        }
+
+        if (findPhoneVibrator != null) {
+            try { findPhoneVibrator.cancel(); } catch (Exception ignored) {}
+            findPhoneVibrator = null;
+        }
+
+        if (findPhoneAudioManager != null && previousAlarmVolume != null) {
+            try {
+                findPhoneAudioManager.setStreamVolume(
+                        AudioManager.STREAM_ALARM,
+                        previousAlarmVolume,
+                        0
+                );
+            } catch (Exception ignored) {}
+        }
+
+        previousAlarmVolume = null;
+        findPhoneAudioManager = null;
     }
 
     /**
