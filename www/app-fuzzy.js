@@ -1,9 +1,12 @@
 // Tikowikointelligent — reconnaissance souple des noms d'applications.
 // Intercepte uniquement les commandes « ouvre/lance… » et conserve tout le reste de l'assistant.
 (function () {
-  const AppLauncherFuzzy = window.Capacitor?.Plugins?.AppLauncher;
-  const previousHandleTranscript = window.handleTranscript;
   const ALIAS_KEY = 'tikowiko_app_aliases_v1';
+  const previousHandleTranscript = window.handleTranscript;
+
+  function plugin() {
+    return window.Capacitor?.Plugins?.AppLauncher;
+  }
 
   function clean(value) {
     return String(value || '')
@@ -20,13 +23,19 @@
 
   function stripFillers(value) {
     let n = clean(value);
-    // « ouvre-moi YouTube », « ouvre l'appli YouTube », « lance le Spotify »…
     n = n
       .replace(/^(?:moi|moi l application|moi l appli|l application|l appli|application|appli)\s+/, '')
       .replace(/^(?:le|la|les|mon|ma|mes)\s+/, '')
       .replace(/\s+(?:s il te plait|stp|merci)$/g, '')
       .trim();
     return n;
+  }
+
+  function stripWakeWord(value) {
+    return clean(value)
+      .replace(/^tiko\s*wiko\s+/, '')
+      .replace(/^tikowiko(?:intelligent)?\s+/, '')
+      .trim();
   }
 
   function lev(a, b) {
@@ -37,9 +46,7 @@
       row[0] = i;
       for (let j = 1; j <= n; j++) {
         const old = row[j];
-        row[j] = a[i - 1] === b[j - 1]
-          ? previous
-          : 1 + Math.min(previous, row[j], row[j - 1]);
+        row[j] = a[i - 1] === b[j - 1] ? previous : 1 + Math.min(previous, row[j], row[j - 1]);
         previous = old;
       }
     }
@@ -65,8 +72,6 @@
     const tc = compact(target);
     const lc = compact(label);
     if (label === target || tc === lc) return 0;
-
-    // Le nom peut être incomplet : « YouTube » pour « YouTube Music ».
     if (label.startsWith(target)) return 0.30 + (label.length - target.length) / 200;
     if (label.includes(target)) return 0.55 + (label.length - target.length) / 200;
     if (lc.startsWith(tc)) return 0.65 + (lc.length - tc.length) / 200;
@@ -75,7 +80,6 @@
     const targetWords = target.split(' ').filter(Boolean);
     const labelWords = label.split(' ').filter(Boolean);
     let wordScore = 999;
-
     for (const tw of targetWords) {
       for (const lw of labelWords) {
         const d = lev(compact(tw), compact(lw));
@@ -96,16 +100,12 @@
       const remembered = apps.find(a => a.packageName === aliasPackage);
       if (remembered) return [{ app: remembered, score: -1 }];
     }
-
-    return apps
-      .map(app => ({ app, score: scoreApp(app, spoken) }))
-      .sort((a, b) => a.score - b.score);
+    return apps.map(app => ({ app, score: scoreApp(app, spoken) })).sort((a, b) => a.score - b.score);
   }
 
   function confidentEnough(best, target) {
     if (!best) return false;
     if (best.score <= 1.2) return true;
-
     const tc = compact(target);
     const labelWords = clean(best.app.label).split(' ').filter(Boolean);
     const distances = [lev(tc, compact(best.app.label))];
@@ -120,7 +120,6 @@
     const choices = ranked.slice(0, 3).map(x => x.app);
     const wrap = document.createElement('div');
     wrap.className = 'bubble system';
-
     const text = document.createElement('div');
     text.textContent = `Je n’ai pas reconnu exactement « ${target} ». Tu voulais dire :`;
     wrap.appendChild(text);
@@ -134,7 +133,7 @@
       button.onclick = async () => {
         saveAlias(target, app.packageName);
         window.addBubble(`D’accord : « ${target} » correspondra maintenant à ${app.label}.`, 'system');
-        try { await AppLauncherFuzzy.launch({ packageName: app.packageName }); }
+        try { await plugin()?.launch?.({ packageName: app.packageName }); }
         catch (e) { window.addBubble('Impossible d’ouvrir l’application : ' + (e?.message || e), 'system error'); }
       };
       row.appendChild(button);
@@ -144,7 +143,7 @@
   }
 
   function extractAppTarget(text) {
-    const n = clean(text);
+    const n = stripWakeWord(text);
     const match = n.match(/^(ouvre|ouvrir|lance|lancer|demarre|demarrer)\b\s*(.*)$/);
     if (!match) return null;
     return stripFillers(match[2]);
@@ -157,16 +156,20 @@
       return;
     }
 
-    // Les modules Courses / Appels / Rappels chargés ensuite peuvent intercepter avant nous.
     if (typeof window.addBubble === 'function') window.addBubble(text, 'user');
     if (!target) {
-      window.addBubble?.('Dis par exemple : « ouvre YouTube » ou simplement le début du nom de l’application.', 'system');
+      window.addBubble?.('Dis par exemple : « ouvre YouTube » ou « Tikowiko, ouvre YouTube ».', 'system');
       return;
     }
 
     (async () => {
       try {
-        const result = await AppLauncherFuzzy?.getInstalledApps?.();
+        const launcher = plugin();
+        if (!launcher?.getInstalledApps || !launcher?.launch) {
+          window.addBubble?.('Le lanceur d’applications Android n’est pas disponible.', 'system error');
+          return;
+        }
+        const result = await launcher.getInstalledApps();
         const apps = Array.isArray(result?.apps) ? result.apps : [];
         if (!apps.length) {
           window.addBubble?.('Je n’arrive pas à lire les applications installées.', 'system error');
@@ -181,7 +184,7 @@
         }
 
         window.addBubble?.(`J’ouvre ${best.app.label}…`, 'system');
-        await AppLauncherFuzzy.launch({ packageName: best.app.packageName });
+        await launcher.launch({ packageName: best.app.packageName });
       } catch (e) {
         window.addBubble?.('Impossible d’ouvrir l’application : ' + (e?.message || e), 'system error');
       }
