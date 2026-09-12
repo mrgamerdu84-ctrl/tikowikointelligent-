@@ -1,0 +1,15 @@
+<!--
+  A ajouter dans : android/app/src/main/AndroidManifest.xml
+  1) Ces lignes vont DANS la balise <manifest>, juste avant <application> :
+-->
+
+<uses-permission android:name="android.permission.RECORD_AUDIO" />
+<uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+
+<!--
+  RECORD_AUDIO : nécessaire pour la reconnaissance vocale.
+  QUERY_ALL_PACKAGES : nécessaire depuis Android 11 pour pouvoir lister TOUTES
+  les applis installées (sans ça, le système n'en montre qu'une partie).
+  Comme cette appli reste privée (pas publiée sur le Play Store), cette
+  permission n'a pas besoin d'être justifiée auprès de Google.
+-->
