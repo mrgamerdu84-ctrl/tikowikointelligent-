@@ -39,6 +39,7 @@ jobs:
         run: |
           mkdir -p android/app/src/main/java/com/tikowiko/intelligent
           cp android-plugin/AppLauncherPlugin.java android/app/src/main/java/com/tikowiko/intelligent/AppLauncherPlugin.java
+          cp android-plugin/DirectCallPlugin.java android/app/src/main/java/com/tikowiko/intelligent/DirectCallPlugin.java
           cp android-plugin/ClapDetectionService.java android/app/src/main/java/com/tikowiko/intelligent/ClapDetectionService.java
           cp android-plugin/MainActivity-snippet.java android/app/src/main/java/com/tikowiko/intelligent/MainActivity.java
 
@@ -52,6 +53,8 @@ jobs:
 
           permissions = [
               '<uses-permission android:name="android.permission.RECORD_AUDIO" />',
+              '<uses-permission android:name="android.permission.READ_CONTACTS" />',
+              '<uses-permission android:name="android.permission.CALL_PHONE" />',
               '<uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />',
               '<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />',
               '<uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />',
