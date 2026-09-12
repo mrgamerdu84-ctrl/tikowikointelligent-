@@ -1,0 +1,84 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Récupérer le dépôt
+        uses: actions/checkout@v4
+
+      - name: Installer Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: package.json
+
+      - name: Installer Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Installer les dépendances
+        run: npm install
+
+      - name: Générer le projet Android Capacitor
+        run: npx cap add android
+
+      - name: Installer le plugin AppLauncher natif
+        run: |
+          mkdir -p android/app/src/main/java/com/tikowiko/intelligent
+          cp android-plugin/AppLauncherPlugin.java android/app/src/main/java/com/tikowiko/intelligent/AppLauncherPlugin.java
+          cp android-plugin/MainActivity-snippet.java android/app/src/main/java/com/tikowiko/intelligent/MainActivity.java
+
+      - name: Ajouter les permissions Android
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          manifest = Path('android/app/src/main/AndroidManifest.xml')
+          text = manifest.read_text(encoding='utf-8')
+
+          permissions = [
+              '<uses-permission android:name="android.permission.RECORD_AUDIO" />',
+              '<uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />',
+          ]
+
+          for permission in permissions:
+              if permission not in text:
+                  text = text.replace('<application', permission + '\n\n    <application', 1)
+
+          manifest.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Synchroniser Capacitor
+        run: npx cap sync android
+
+      - name: Construire l'APK debug
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Préparer l'APK
+        run: |
+          mkdir -p dist
+          cp android/app/build/outputs/apk/debug/app-debug.apk dist/Tikowikointelligent-debug.apk
+
+      - name: Publier l'artefact APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Tikowikointelligent-APK
+          path: dist/Tikowikointelligent-debug.apk
+          if-no-files-found: error
+          retention-days: 30
