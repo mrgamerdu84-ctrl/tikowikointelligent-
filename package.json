@@ -1,7 +1,7 @@
 {
   "name": "tikowikointelligent",
   "version": "1.0.0",
-  "description": "Assistant vocal local pour lancer des applications Android",
+  "description": "Assistant vocal local Tikowikointelligent pour lancer des applications, gérer des rendez-vous, rappels, appels sécurisés et listes de courses sur Android",
   "scripts": {
     "sync": "npx cap sync android",
     "open:android": "npx cap open android"
@@ -9,7 +9,7 @@
   "dependencies": {
     "@capacitor/android": "^6.1.2",
     "@capacitor/core": "^6.1.2",
-    "@capacitor-community/speech-recognition": "^6.1.0"
+    "@capacitor-community/speech-recognition": "^6.0.1"
   },
   "devDependencies": {
     "@capacitor/cli": "^6.1.2"
