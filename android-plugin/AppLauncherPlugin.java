@@ -2,6 +2,7 @@ package com.tikowiko.intelligent;
 
 import android.Manifest;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.provider.CalendarContract;
@@ -17,8 +18,8 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 
 import java.util.List;
 
-// Plugin maison : liste/lance les applications, contrôle le double claquement
-// et prépare des rendez-vous dans l'agenda Android.
+// Plugin maison : lance les applications, prépare les rendez-vous et contrôle
+// la détection locale / le profil personnel de claquement.
 @CapacitorPlugin(name = "AppLauncher")
 public class AppLauncherPlugin extends Plugin {
 
@@ -110,8 +111,7 @@ public class AppLauncherPlugin extends Plugin {
 
     @PluginMethod
     public void startClapActivation(PluginCall call) {
-        if (ContextCompat.checkSelfPermission(getContext(), Manifest.permission.RECORD_AUDIO)
-                != PackageManager.PERMISSION_GRANTED) {
+        if (!hasMicrophonePermission()) {
             call.reject("PERMISSION_MICRO_REQUIRED");
             return;
         }
@@ -133,8 +133,7 @@ public class AppLauncherPlugin extends Plugin {
         try {
             Intent service = new Intent(getContext(), ClapDetectionService.class);
             getContext().stopService(service);
-            getContext().getSharedPreferences(ClapDetectionService.PREFS, 0)
-                    .edit().putBoolean(ClapDetectionService.PREF_CLAP_ENABLED, false).apply();
+            prefs().edit().putBoolean(ClapDetectionService.PREF_CLAP_ENABLED, false).apply();
 
             JSObject result = new JSObject();
             result.put("enabled", false);
@@ -147,9 +146,7 @@ public class AppLauncherPlugin extends Plugin {
 
     @PluginMethod
     public void getClapActivationStatus(PluginCall call) {
-        boolean enabled = getContext()
-                .getSharedPreferences(ClapDetectionService.PREFS, 0)
-                .getBoolean(ClapDetectionService.PREF_CLAP_ENABLED, false);
+        boolean enabled = prefs().getBoolean(ClapDetectionService.PREF_CLAP_ENABLED, false);
 
         JSObject result = new JSObject();
         result.put("enabled", enabled);
@@ -165,12 +162,8 @@ public class AppLauncherPlugin extends Plugin {
             return;
         }
 
-        boolean enabled = getContext()
-                .getSharedPreferences(ClapDetectionService.PREFS, 0)
-                .getBoolean(ClapDetectionService.PREF_CLAP_ENABLED, false);
-
-        getContext().getSharedPreferences(ClapDetectionService.PREFS, 0)
-                .edit().putString(ClapDetectionService.PREF_CLAP_SENSITIVITY, sensitivity).apply();
+        boolean enabled = prefs().getBoolean(ClapDetectionService.PREF_CLAP_ENABLED, false);
+        prefs().edit().putString(ClapDetectionService.PREF_CLAP_SENSITIVITY, sensitivity).apply();
 
         JSObject result = new JSObject();
         result.put("enabled", enabled);
@@ -178,10 +171,92 @@ public class AppLauncherPlugin extends Plugin {
         call.resolve(result);
     }
 
+    @PluginMethod
+    public void startClapProfileTraining(PluginCall call) {
+        if (!hasMicrophonePermission()) {
+            call.reject("PERMISSION_MICRO_REQUIRED");
+            return;
+        }
+
+        try {
+            boolean activationAlreadyEnabled = prefs()
+                    .getBoolean(ClapDetectionService.PREF_CLAP_ENABLED, false);
+
+            Intent service = new Intent(getContext(), ClapDetectionService.class);
+            service.setAction(ClapDetectionService.ACTION_TRAIN_PROFILE);
+            service.putExtra(ClapDetectionService.EXTRA_TRAINING_ONLY, !activationAlreadyEnabled);
+            ContextCompat.startForegroundService(getContext(), service);
+
+            JSObject result = buildProfileStatus();
+            result.put("started", true);
+            call.resolve(result);
+        } catch (Exception e) {
+            call.reject("Impossible de démarrer l'apprentissage : " + e.getMessage());
+        }
+    }
+
+    @PluginMethod
+    public void getClapProfileStatus(PluginCall call) {
+        call.resolve(buildProfileStatus());
+    }
+
+    @PluginMethod
+    public void setPersonalClapMode(PluginCall call) {
+        Boolean enabled = call.getBoolean("enabled");
+        if (enabled == null) {
+            call.reject("Paramètre enabled manquant");
+            return;
+        }
+
+        if (enabled && !prefs().getBoolean(ClapDetectionService.PREF_PROFILE_TRAINED, false)) {
+            call.reject("Il faut d'abord apprendre ton profil de claquement");
+            return;
+        }
+
+        prefs().edit().putBoolean(ClapDetectionService.PREF_PROFILE_ENABLED, enabled).apply();
+        call.resolve(buildProfileStatus());
+    }
+
+    @PluginMethod
+    public void resetClapProfile(PluginCall call) {
+        prefs().edit()
+                .remove(ClapDetectionService.PREF_PROFILE_F1)
+                .remove(ClapDetectionService.PREF_PROFILE_F2)
+                .remove(ClapDetectionService.PREF_PROFILE_F3)
+                .putBoolean(ClapDetectionService.PREF_PROFILE_TRAINED, false)
+                .putBoolean(ClapDetectionService.PREF_PROFILE_ENABLED, false)
+                .putBoolean(ClapDetectionService.PREF_PROFILE_TRAINING, false)
+                .putInt(ClapDetectionService.PREF_PROFILE_TRAINING_COUNT, 0)
+                .apply();
+
+        call.resolve(buildProfileStatus());
+    }
+
+    private JSObject buildProfileStatus() {
+        SharedPreferences p = prefs();
+        JSObject result = new JSObject();
+        result.put("trained", p.getBoolean(ClapDetectionService.PREF_PROFILE_TRAINED, false));
+        result.put("enabled", p.getBoolean(ClapDetectionService.PREF_PROFILE_ENABLED, false));
+        result.put("training", p.getBoolean(ClapDetectionService.PREF_PROFILE_TRAINING, false));
+        result.put("samples", p.getInt(ClapDetectionService.PREF_PROFILE_TRAINING_COUNT, 0));
+        result.put("target", ClapDetectionService.PROFILE_SAMPLE_TARGET);
+        return result;
+    }
+
+    private boolean hasMicrophonePermission() {
+        return ContextCompat.checkSelfPermission(getContext(), Manifest.permission.RECORD_AUDIO)
+                == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private SharedPreferences prefs() {
+        return getContext().getSharedPreferences(ClapDetectionService.PREFS, 0);
+    }
+
     private String getSavedSensitivity() {
-        String saved = getContext()
-                .getSharedPreferences(ClapDetectionService.PREFS, 0)
-                .getString(ClapDetectionService.PREF_CLAP_SENSITIVITY, ClapDetectionService.SENSITIVITY_NORMAL);
+        String saved = prefs().getString(
+                ClapDetectionService.PREF_CLAP_SENSITIVITY,
+                ClapDetectionService.SENSITIVITY_NORMAL
+        );
         String normalized = normalizeSensitivity(saved);
         return normalized == null ? ClapDetectionService.SENSITIVITY_NORMAL : normalized;
     }
