@@ -178,11 +178,12 @@ async function setClapSensitivity(value) {
   }
 }
 
-// --- Correspondance texte parlé -> application ---
+// --- Outils texte ---
 function normalize(s) {
   return s.toLowerCase()
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
     .replace(/[^a-z0-9 ]/g, '')
+    .replace(/\s+/g, ' ')
     .trim();
 }
 
@@ -200,6 +201,153 @@ function levenshtein(a, b) {
   return dp[m][n];
 }
 
+// --- Rendez-vous / agenda Android ---
+const MONTHS = {
+  janvier: 0, fevrier: 1, mars: 2, avril: 3, mai: 4, juin: 5,
+  juillet: 6, aout: 7, septembre: 8, octobre: 9, novembre: 10, decembre: 11
+};
+
+const WEEKDAYS = {
+  dimanche: 0, lundi: 1, mardi: 2, mercredi: 3,
+  jeudi: 4, vendredi: 5, samedi: 6
+};
+
+function addDays(date, days) {
+  const d = new Date(date);
+  d.setDate(d.getDate() + days);
+  return d;
+}
+
+function parseAppointment(text) {
+  const norm = normalize(text);
+  const now = new Date();
+  let date = null;
+
+  if (/\bapres demain\b/.test(norm)) {
+    date = addDays(now, 2);
+  } else if (/\bdemain\b/.test(norm)) {
+    date = addDays(now, 1);
+  } else if (/\baujourd hui\b/.test(norm)) {
+    date = new Date(now);
+  }
+
+  if (!date) {
+    const numeric = norm.match(/\b(\d{1,2})[\/-](\d{1,2})(?:[\/-](\d{2,4}))?\b/);
+    if (numeric) {
+      const day = Number(numeric[1]);
+      const month = Number(numeric[2]) - 1;
+      let year = numeric[3] ? Number(numeric[3]) : now.getFullYear();
+      if (year < 100) year += 2000;
+      const candidate = new Date(year, month, day);
+      if (!numeric[3] && candidate < new Date(now.getFullYear(), now.getMonth(), now.getDate())) {
+        candidate.setFullYear(candidate.getFullYear() + 1);
+      }
+      date = candidate;
+    }
+  }
+
+  if (!date) {
+    const monthNames = Object.keys(MONTHS).join('|');
+    const written = norm.match(new RegExp(`\\b(\\d{1,2})\\s+(${monthNames})(?:\\s+(\\d{4}))?\\b`));
+    if (written) {
+      const day = Number(written[1]);
+      const month = MONTHS[written[2]];
+      const hasYear = !!written[3];
+      const year = hasYear ? Number(written[3]) : now.getFullYear();
+      const candidate = new Date(year, month, day);
+      if (!hasYear && candidate < new Date(now.getFullYear(), now.getMonth(), now.getDate())) {
+        candidate.setFullYear(candidate.getFullYear() + 1);
+      }
+      date = candidate;
+    }
+  }
+
+  if (!date) {
+    const weekdayNames = Object.keys(WEEKDAYS).join('|');
+    const weekdayMatch = norm.match(new RegExp(`\\b(${weekdayNames})(\\s+prochain)?\\b`));
+    if (weekdayMatch) {
+      const target = WEEKDAYS[weekdayMatch[1]];
+      let delta = (target - now.getDay() + 7) % 7;
+      if (weekdayMatch[2] && delta === 0) delta = 7;
+      date = addDays(now, delta);
+    }
+  }
+
+  const timeMatch = norm.match(/\b(\d{1,2})\s*(?:h|heure|heures|:)(?:\s*(\d{1,2}))?\b/);
+  if (!date || !timeMatch) {
+    return {
+      ok: false,
+      missing: !date && !timeMatch ? 'date et heure' : (!date ? 'date' : 'heure')
+    };
+  }
+
+  const hour = Number(timeMatch[1]);
+  const minute = Number(timeMatch[2] || 0);
+  if (hour > 23 || minute > 59) return { ok: false, missing: 'heure valide' };
+
+  date.setHours(hour, minute, 0, 0);
+
+  let title = text;
+  title = title
+    .replace(/^(ajoute|ajouter|mets|mettre|note|noter|crée|cree|créer|creer|programme|programmer|planifie|planifier)\s+/i, '')
+    .replace(/\bj['’]?ai\s+/ig, '')
+    .replace(/\b(un\s+)?rendez[- ]?vous\b/ig, '')
+    .replace(/\brdv\b/ig, '')
+    .replace(/\b(dans|sur)\s+(mon\s+)?(agenda|calendrier)\b/ig, '')
+    .replace(/\b(aujourd['’]?hui|demain|après[- ]demain|apres[- ]demain)\b/ig, '')
+    .replace(/\b(lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche)(\s+prochain)?\b/ig, '')
+    .replace(/\b(le\s+)?\d{1,2}[\/-]\d{1,2}(?:[\/-]\d{2,4})?\b/ig, '')
+    .replace(/\b(le\s+)?\d{1,2}\s+(janvier|février|fevrier|mars|avril|mai|juin|juillet|août|aout|septembre|octobre|novembre|décembre|decembre)(?:\s+\d{4})?\b/ig, '')
+    .replace(/\b(?:à|a)?\s*\d{1,2}\s*(?:h|heure|heures|:)(?:\s*\d{1,2})?\b/ig, '')
+    .replace(/\s+/g, ' ')
+    .replace(/^[,;:\-\s]+|[,;:\-\s]+$/g, '')
+    .trim();
+
+  if (!title) title = 'Rendez-vous';
+  title = title.charAt(0).toUpperCase() + title.slice(1);
+
+  const end = new Date(date.getTime() + 60 * 60 * 1000);
+  return { ok: true, title, start: date, end };
+}
+
+function looksLikeAppointmentCommand(norm) {
+  if (/^(ouvre|ouvrir|lance|lancer|demarre|demarrer)\b/.test(norm)) return false;
+  if (/\b(rendez vous|rdv)\b/.test(norm)) return true;
+  return /^(ajoute|ajouter|mets|mettre|note|noter|cree|creer|programme|programmer|planifie|planifier)\b/.test(norm)
+    && (/\b(agenda|calendrier|demain|aujourd hui|apres demain|lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche)\b/.test(norm)
+      || /\b\d{1,2}[\/-]\d{1,2}\b/.test(norm));
+}
+
+async function handleAppointmentCommand(text) {
+  if (!AppLauncher || typeof AppLauncher.createCalendarEvent !== 'function') {
+    addBubble('La fonction agenda est disponible dans l’application Android compilée.', 'system error');
+    return;
+  }
+
+  const appointment = parseAppointment(text);
+  if (!appointment.ok) {
+    addBubble(`Je n’ai pas compris la ${appointment.missing}. Exemple : « rendez-vous dentiste le 18 septembre à 14 h 30 »`, 'system');
+    return;
+  }
+
+  const formatted = new Intl.DateTimeFormat('fr-FR', {
+    weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit'
+  }).format(appointment.start);
+
+  addBubble(`Je prépare « ${appointment.title} » pour ${formatted}. Vérifie puis confirme dans ton agenda.`, 'system');
+
+  try {
+    await AppLauncher.createCalendarEvent({
+      title: appointment.title,
+      startMillis: appointment.start.getTime(),
+      endMillis: appointment.end.getTime()
+    });
+  } catch (e) {
+    addBubble('Impossible d’ouvrir l’agenda : ' + (e?.message || e), 'system error');
+  }
+}
+
+// --- Correspondance texte parlé -> application ---
 const learnedAliases = {};
 
 function topMatches(spoken, count = 3) {
@@ -285,13 +433,18 @@ function handleTranscript(text) {
   addBubble(text, 'user');
   const norm = normalize(text);
 
-  const trigger = TRIGGER_WORDS.find(w => norm.startsWith(w + ' ') || norm === w);
-  if (!trigger) {
-    addBubble('Dis "ouvre" ou "lance" suivi du nom de l\'appli.', 'system');
+  if (looksLikeAppointmentCommand(norm)) {
+    handleAppointmentCommand(text);
     return;
   }
 
-  const spokenAppName = norm.slice(trigger.length).trim();
+  const trigger = TRIGGER_WORDS.find(w => norm.startsWith(normalize(w) + ' ') || norm === normalize(w));
+  if (!trigger) {
+    addBubble('Tu peux dire « ouvre YouTube » ou « rendez-vous dentiste demain à 14 h ».', 'system');
+    return;
+  }
+
+  const spokenAppName = norm.slice(normalize(trigger).length).trim();
   const app = findBestApp(spokenAppName);
 
   if (!app) {
@@ -308,7 +461,7 @@ function handleTranscript(text) {
 // --- Écoute vocale ---
 async function toggleListening() {
   if (!SpeechRecognition) {
-    addBubble('Reconnaissance vocale indisponible (lance l\'app compilée sur un vrai téléphone).', 'system error');
+    addBubble('Reconnaissance vocale indisponible (lance l’application compilée sur un vrai téléphone).', 'system error');
     return;
   }
 
@@ -338,7 +491,7 @@ async function toggleListening() {
     const phrase = result?.matches?.[0];
     if (phrase) handleTranscript(phrase);
   } catch (e) {
-    addBubble('Erreur d\'écoute : ' + e.message, 'system error');
+    addBubble('Erreur d’écoute : ' + e.message, 'system error');
   } finally {
     setListeningUI(false);
   }
@@ -352,4 +505,4 @@ function setListeningUI(on) {
 
 refreshApps();
 refreshClapStatus();
-addBubble('Salut, je suis Tikowikointelligent. Dis-moi "ouvre" + le nom d\'une appli.', 'system');
+addBubble('Salut, je suis Tikowikointelligent. Je peux ouvrir tes applis et préparer tes rendez-vous dans l’agenda.', 'system');
