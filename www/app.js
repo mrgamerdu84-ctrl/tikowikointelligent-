@@ -1,7 +1,5 @@
 // Tikowikointelligent — logique principale
-// Utilise deux plugins natifs Capacitor :
-//  - SpeechRecognition (@capacitor-community/speech-recognition) : reconnaissance vocale native Android
-//  - AppLauncher (plugin maison, voir android-plugin/) : liste + lance les applis installées
+// Reconnaissance vocale native Android + plugin maison AppLauncher.
 
 const SpeechRecognition = window.Capacitor?.Plugins?.SpeechRecognition;
 const AppLauncher = window.Capacitor?.Plugins?.AppLauncher;
@@ -21,7 +19,30 @@ function addBubble(text, type) {
   logEl.scrollTop = logEl.scrollHeight;
 }
 
-// --- Chargement de la liste des applis (à chaque ouverture, donc toujours à jour) ---
+// --- Permissions micro ---
+async function ensureMicrophonePermission() {
+  if (!SpeechRecognition) return false;
+
+  try {
+    const perm = await SpeechRecognition.checkPermissions();
+    if (perm?.speechRecognition === 'granted' || perm?.microphone === 'granted') return true;
+
+    let req;
+    if (typeof SpeechRecognition.requestPermissions === 'function') {
+      req = await SpeechRecognition.requestPermissions();
+    } else if (typeof SpeechRecognition.requestPermission === 'function') {
+      req = await SpeechRecognition.requestPermission();
+    } else {
+      return false;
+    }
+
+    return req?.speechRecognition === 'granted' || req?.microphone === 'granted';
+  } catch (e) {
+    return false;
+  }
+}
+
+// --- Chargement de la liste des applis ---
 async function refreshApps() {
   if (!AppLauncher) return;
   try {
@@ -47,15 +68,78 @@ function openAppsPanel() {
       });
   });
 }
+
 function closeAppsPanel() {
   document.getElementById('appsPanel').classList.remove('open');
 }
 
+// --- Réglages : activation par double claquement ---
+function openSettingsPanel() {
+  document.getElementById('settingsPanel').classList.add('open');
+  refreshClapStatus();
+}
+
+function closeSettingsPanel() {
+  document.getElementById('settingsPanel').classList.remove('open');
+}
+
+async function refreshClapStatus() {
+  const toggle = document.getElementById('clapToggle');
+  const status = document.getElementById('clapStatus');
+  if (!toggle || !status) return;
+
+  if (!AppLauncher || typeof AppLauncher.getClapActivationStatus !== 'function') {
+    toggle.checked = false;
+    toggle.disabled = true;
+    status.textContent = 'Disponible uniquement sur Android';
+    return;
+  }
+
+  try {
+    const result = await AppLauncher.getClapActivationStatus();
+    const enabled = !!result?.enabled;
+    toggle.checked = enabled;
+    toggle.disabled = false;
+    status.textContent = enabled ? 'Activée — écoute locale en arrière-plan' : 'Désactivée';
+  } catch (e) {
+    toggle.checked = false;
+    status.textContent = 'État indisponible';
+  }
+}
+
+async function toggleClapActivation(enabled) {
+  const toggle = document.getElementById('clapToggle');
+  const status = document.getElementById('clapStatus');
+  if (!toggle || !status || !AppLauncher) return;
+
+  toggle.disabled = true;
+  status.textContent = enabled ? 'Activation…' : 'Désactivation…';
+
+  try {
+    if (enabled) {
+      const granted = await ensureMicrophonePermission();
+      if (!granted) throw new Error('Permission micro refusée');
+      await AppLauncher.startClapActivation();
+      status.textContent = 'Activée — fais deux claquements rapprochés';
+      addBubble('Activation par double claquement activée.', 'system');
+    } else {
+      await AppLauncher.stopClapActivation();
+      status.textContent = 'Désactivée';
+      addBubble('Activation par double claquement désactivée.', 'system');
+    }
+  } catch (e) {
+    toggle.checked = !enabled;
+    status.textContent = toggle.checked ? 'Activée' : 'Désactivée';
+    addBubble('Impossible de modifier le double claquement : ' + (e?.message || e), 'system error');
+  } finally {
+    toggle.disabled = false;
+  }
+}
+
 // --- Correspondance texte parlé -> application ---
-// Comparaison simple et tolérante : normalise, cherche la meilleure inclusion / proximité
 function normalize(s) {
   return s.toLowerCase()
-    .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // enlève les accents
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
     .replace(/[^a-z0-9 ]/g, '')
     .trim();
 }
@@ -74,7 +158,6 @@ function levenshtein(a, b) {
   return dp[m][n];
 }
 
-// Alias appris (phrase mal comprise -> vraie appli), en mémoire pour cette session
 const learnedAliases = {};
 
 function topMatches(spoken, count = 3) {
@@ -96,23 +179,26 @@ function findBestApp(spokenName) {
   const target = normalize(spokenName);
   if (!target) return null;
   if (learnedAliases[target]) return learnedAliases[target];
+
   let best = null;
   let bestScore = Infinity;
   for (const app of installedApps) {
     const label = normalize(app.label);
     if (!label) continue;
+
     let score;
     if (label.includes(target) || target.includes(label)) {
-      score = Math.abs(label.length - target.length); // quasi-match direct
+      score = Math.abs(label.length - target.length);
     } else {
       score = levenshtein(label, target);
     }
+
     if (score < bestScore) {
       bestScore = score;
       best = app;
     }
   }
-  // seuil de tolérance : évite de lancer n'importe quoi sur un mot trop différent
+
   const threshold = Math.max(2, Math.floor(target.length * 0.4));
   return bestScore <= threshold ? best : null;
 }
@@ -122,17 +208,20 @@ function offerSuggestions(spokenRaw) {
   const suggestions = topMatches(spokenRaw, 3);
   const wrap = document.createElement('div');
   wrap.className = 'bubble system';
+
   const label = document.createElement('div');
   label.textContent = `Je n'ai pas reconnu "${spokenRaw}". Tu voulais dire :`;
   wrap.appendChild(label);
+
   const btnRow = document.createElement('div');
   btnRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;';
+
   suggestions.forEach(app => {
     const btn = document.createElement('button');
     btn.textContent = app.label;
     btn.style.cssText = 'background:var(--accent);color:#0b1211;border:none;border-radius:8px;padding:6px 10px;font-size:13px;';
     btn.onclick = () => {
-      learnedAliases[target] = app; // mémorise pour cette session
+      learnedAliases[target] = app;
       addBubble(`Compris — "${spokenRaw}" = ${app.label} à partir de maintenant.`, 'system');
       addBubble(`J'ouvre ${app.label}…`, 'system');
       AppLauncher.launch({ packageName: app.packageName }).catch(e => {
@@ -141,6 +230,7 @@ function offerSuggestions(spokenRaw) {
     };
     btnRow.appendChild(btn);
   });
+
   wrap.appendChild(btnRow);
   logEl.appendChild(wrap);
   logEl.scrollTop = logEl.scrollHeight;
@@ -186,21 +276,14 @@ async function toggleListening() {
     return;
   }
 
-  const perm = await SpeechRecognition.checkPermissions();
-  if (perm.speechRecognition !== 'granted') {
-    const req = await SpeechRecognition.requestPermission();
-    if (req.speechRecognition !== 'granted') {
-      addBubble('Permission micro refusée.', 'system error');
-      return;
-    }
+  const granted = await ensureMicrophonePermission();
+  if (!granted) {
+    addBubble('Permission micro refusée.', 'system error');
+    return;
   }
 
   setListeningUI(true);
   await refreshApps();
-
-  SpeechRecognition.addListener('partialResults', (data) => {
-    // On garde seulement le résultat final traité côté "stop" naturel du plugin
-  });
 
   try {
     const result = await SpeechRecognition.start({
@@ -225,6 +308,6 @@ function setListeningUI(on) {
   statusEl.textContent = on ? 'Écoute en cours…' : 'Prêt à écouter';
 }
 
-// Chargement initial de la liste (pour que le premier "ouvre X" fonctionne direct)
 refreshApps();
+refreshClapStatus();
 addBubble('Salut, je suis Tikowikointelligent. Dis-moi "ouvre" + le nom d\'une appli.', 'system');
