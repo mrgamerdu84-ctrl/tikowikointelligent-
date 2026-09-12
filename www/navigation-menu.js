@@ -138,21 +138,31 @@
     document.getElementById('menuHelp').onclick = goHelp;
   }
 
-  function loadSpeechFix() {
-    if (document.querySelector('script[data-tikowiko-speech-fix]')) return;
-    const script = document.createElement('script');
-    script.src = 'speech-fix.js';
-    script.dataset.tikowikoSpeechFix = '1';
-    document.body.appendChild(script);
+  function loadSupportScripts() {
+    if (!document.querySelector('script[data-tikowiko-speech-fix]')) {
+      const speech = document.createElement('script');
+      speech.src = 'speech-fix.js';
+      speech.async = false;
+      speech.dataset.tikowikoSpeechFix = '1';
+      document.body.appendChild(speech);
+    }
+
+    if (!document.querySelector('script[data-tikowiko-direct-call]')) {
+      const directCall = document.createElement('script');
+      directCall.src = 'direct-call.js';
+      directCall.async = false;
+      directCall.dataset.tikowikoDirectCall = '1';
+      document.body.appendChild(directCall);
+    }
   }
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => {
       installMenu();
-      loadSpeechFix();
+      loadSupportScripts();
     });
   } else {
     installMenu();
-    loadSpeechFix();
+    loadSupportScripts();
   }
 })();
