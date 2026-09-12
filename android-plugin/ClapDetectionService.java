@@ -59,7 +59,7 @@ public class ClapDetectionService extends Service {
     private Thread worker;
     private long firstClapAt = 0L;
     private long lastCandidateAt = 0L;
-    private double noiseFloor = 700.0;
+    private double noiseFloor = 450.0;
 
     private int trainingCount = 0;
     private double trainingSumF1 = 0.0;
@@ -84,7 +84,7 @@ public class ClapDetectionService extends Service {
         } else {
             prefs.edit().putBoolean(PREF_CLAP_ENABLED, true).apply();
             trainingOnly = false;
-            startForeground(NOTIFICATION_ID, buildNotification("Activation par double claquement active"));
+            startForeground(NOTIFICATION_ID, buildNotification("Double claquement actif — fais 2 claquements rapprochés"));
         }
 
         if (!running) startDetector();
@@ -112,7 +112,7 @@ public class ClapDetectionService extends Service {
                 AudioFormat.CHANNEL_IN_MONO,
                 AudioFormat.ENCODING_PCM_16BIT
         );
-        int bufferSize = Math.max(minBuffer, 2048);
+        int bufferSize = Math.max(minBuffer, 1024);
 
         try {
             recorder = new AudioRecord(
@@ -123,11 +123,13 @@ public class ClapDetectionService extends Service {
                     bufferSize * 2
             );
             if (recorder.getState() != AudioRecord.STATE_INITIALIZED) {
+                updateForegroundText("Micro indisponible pour le double claquement");
                 stopSelf();
                 return;
             }
             recorder.startRecording();
         } catch (SecurityException e) {
+            updateForegroundText("Autorisation micro nécessaire pour le claquement");
             stopSelf();
             return;
         }
@@ -138,7 +140,7 @@ public class ClapDetectionService extends Service {
     }
 
     private void detectLoop(int bufferSize) {
-        short[] buffer = new short[bufferSize];
+        short[] buffer = new short[Math.min(bufferSize, 1024)];
 
         while (running && recorder != null) {
             int read = recorder.read(buffer, 0, buffer.length);
@@ -153,9 +155,9 @@ public class ClapDetectionService extends Service {
             }
 
             double rms = Math.sqrt(sumSquares / (double) read);
-            if (peak < noiseFloor * 2.2) {
-                noiseFloor = noiseFloor * 0.96 + rms * 0.04;
-                noiseFloor = Math.max(350.0, Math.min(noiseFloor, 5000.0));
+            if (peak < noiseFloor * 1.8) {
+                noiseFloor = noiseFloor * 0.97 + rms * 0.03;
+                noiseFloor = Math.max(250.0, Math.min(noiseFloor, 4000.0));
             }
 
             DetectionProfile profile = getDetectionProfile();
@@ -170,12 +172,12 @@ public class ClapDetectionService extends Service {
                 .getString(PREF_CLAP_SENSITIVITY, SENSITIVITY_NORMAL);
 
         if (SENSITIVITY_LOW.equals(sensitivity)) {
-            return new DetectionProfile(9000.0, 5.0, 2.5);
+            return new DetectionProfile(6500.0, 4.0, 2.1);
         }
         if (SENSITIVITY_HIGH.equals(sensitivity)) {
-            return new DetectionProfile(4200.0, 3.0, 1.9);
+            return new DetectionProfile(1800.0, 2.0, 1.4);
         }
-        return new DetectionProfile(6500.0, 4.0, 2.2);
+        return new DetectionProfile(3500.0, 2.8, 1.7);
     }
 
     private static class DetectionProfile {
@@ -194,7 +196,7 @@ public class ClapDetectionService extends Service {
         long now = SystemClock.elapsedRealtime();
 
         // Un même claquement traverse plusieurs buffers : on ne le compte qu'une fois.
-        if (now - lastCandidateAt < 170) return;
+        if (now - lastCandidateAt < 120) return;
         lastCandidateAt = now;
 
         if (trainingProfile) {
@@ -204,23 +206,24 @@ public class ClapDetectionService extends Service {
 
         if (!matchesPersonalProfile(peak, rms)) return;
 
-        if (firstClapAt == 0L || now - firstClapAt > 950) {
+        if (firstClapAt == 0L || now - firstClapAt > 1400) {
             firstClapAt = now;
+            updateForegroundText("1er claquement détecté — fais le deuxième");
             return;
         }
 
         long gap = now - firstClapAt;
-        if (gap >= 180 && gap <= 950) {
+        if (gap >= 130 && gap <= 1400) {
             firstClapAt = 0L;
+            updateForegroundText("Double claquement détecté — ouverture de Tikowiko");
             openTikowiko();
         }
     }
 
     private double[] extractFeatures(int peak, double rms) {
-        double safeNoise = Math.max(noiseFloor, 350.0);
+        double safeNoise = Math.max(noiseFloor, 250.0);
         double safeRms = Math.max(rms, 1.0);
 
-        // Ratios normalisés : ils dépendent moins du volume absolu du micro.
         double f1 = peak / safeNoise;
         double f2 = peak / safeRms;
         double f3 = safeRms / safeNoise;
@@ -284,8 +287,8 @@ public class ClapDetectionService extends Service {
         double score = d1 * 0.35 + d2 * 0.45 + d3 * 0.20;
 
         String sensitivity = prefs.getString(PREF_CLAP_SENSITIVITY, SENSITIVITY_NORMAL);
-        double allowed = SENSITIVITY_LOW.equals(sensitivity) ? 0.26
-                : (SENSITIVITY_HIGH.equals(sensitivity) ? 0.52 : 0.38);
+        double allowed = SENSITIVITY_LOW.equals(sensitivity) ? 0.42
+                : (SENSITIVITY_HIGH.equals(sensitivity) ? 0.82 : 0.62);
         return score <= allowed;
     }
 
@@ -297,7 +300,7 @@ public class ClapDetectionService extends Service {
         try {
             startActivity(launch);
         } catch (Exception ignored) {
-            // Certains Android bloquent l'ouverture automatique depuis l'arrière-plan.
+            updateForegroundText("Double claquement reconnu — touche ici pour ouvrir Tikowiko");
         }
     }
 
