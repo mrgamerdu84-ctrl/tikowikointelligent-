@@ -39,6 +39,7 @@ jobs:
           mkdir -p android/app/src/main/res/xml
           cp android-plugin/AppLauncherPlugin.java android/app/src/main/java/com/tikowiko/intelligent/AppLauncherPlugin.java
           cp android-plugin/DirectCallPlugin.java android/app/src/main/java/com/tikowiko/intelligent/DirectCallPlugin.java
+          cp android-plugin/ActivityPointsPlugin.java android/app/src/main/java/com/tikowiko/intelligent/ActivityPointsPlugin.java
           cp android-plugin/ClapDetectionService.java android/app/src/main/java/com/tikowiko/intelligent/ClapDetectionService.java
           cp android-plugin/TikowikoVoiceInteractionService.java android/app/src/main/java/com/tikowiko/intelligent/TikowikoVoiceInteractionService.java
           cp android-plugin/TikowikoVoiceInteractionSessionService.java android/app/src/main/java/com/tikowiko/intelligent/TikowikoVoiceInteractionSessionService.java
@@ -63,6 +64,7 @@ jobs:
               '<uses-permission android:name="android.permission.VIBRATE" />',
               '<uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />',
               '<uses-permission android:name="android.permission.WAKE_LOCK" />',
+              '<uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />',
           ]
           for permission in permissions:
               if permission not in text:
