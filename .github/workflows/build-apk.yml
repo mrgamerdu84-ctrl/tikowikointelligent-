@@ -1,9 +1,10 @@
 name: Build Android APK
 
-on:
+'on':
   workflow_dispatch:
   push:
-    branches: [main]
+    branches:
+      - main
 
 permissions:
   contents: write
@@ -11,31 +12,28 @@ permissions:
 jobs:
   build-apk:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Récupérer le dépôt
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Installer Node.js
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: package.json
 
-      - name: Installer Java 17
+      - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Installer les dépendances
+      - name: Install dependencies
         run: npm install
 
-      - name: Générer le projet Android Capacitor
+      - name: Generate Android project
         run: npx cap add android
 
-      - name: Installer les composants natifs Tikowiko
+      - name: Install Tikowiko native components
         run: |
           mkdir -p android/app/src/main/java/com/tikowiko/intelligent
           mkdir -p android/app/src/main/res/xml
@@ -49,7 +47,7 @@ jobs:
           cp android-plugin/voice_interaction_service.xml android/app/src/main/res/xml/voice_interaction_service.xml
           cp android-plugin/MainActivity-snippet.java android/app/src/main/java/com/tikowiko/intelligent/MainActivity.java
 
-      - name: Ajouter les permissions et les services Android
+      - name: Patch Android manifest
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -92,10 +90,10 @@ jobs:
           manifest.write_text(text, encoding='utf-8')
           PY
 
-      - name: Synchroniser Capacitor
+      - name: Sync Capacitor
         run: npx cap sync android
 
-      - name: Installer les visuels Tikowiko sans retouche
+      - name: Install Tikowiko visuals
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -106,57 +104,46 @@ jobs:
               raise SystemExit('Visuels Tikowiko absents')
           res = Path('android/app/src/main/res')
           densities = ['mipmap-mdpi','mipmap-hdpi','mipmap-xhdpi','mipmap-xxhdpi','mipmap-xxxhdpi']
-          for folder in ['drawable','drawable-port','drawable-nodpi','mipmap-anydpi-v26','values-v31',*densities]:
-              (res/folder).mkdir(parents=True, exist_ok=True)
+          for folder in ['drawable','drawable-port','drawable-nodpi','mipmap-anydpi-v26',*densities]:
+              (res / folder).mkdir(parents=True, exist_ok=True)
           for folder in densities:
               for stem in ['ic_launcher','ic_launcher_round','ic_launcher_foreground']:
                   for suffix in ['png','webp','jpg','xml']:
-                      p=res/folder/f'{stem}.{suffix}'
-                      if p.exists(): p.unlink()
-          for p in [res/'mipmap-anydpi-v26/ic_launcher.xml',res/'mipmap-anydpi-v26/ic_launcher_round.xml',res/'drawable/splash.png',res/'drawable-port/splash.png']:
-              if p.exists(): p.unlink()
-          # Les deux fichiers utilisateur sont copiés octet pour octet : aucune retouche de l'image source.
-          shutil.copyfile(icon,res/'drawable-nodpi/tikowiko_icon.jpg')
-          shutil.copyfile(splash,res/'drawable-nodpi/tikowiko_splash.jpg')
-          legacy='''<?xml version="1.0" encoding="utf-8"?><bitmap xmlns:android="http://schemas.android.com/apk/res/android" android:src="@drawable/tikowiko_icon" android:gravity="center"/>'''
+                      p = res / folder / f'{stem}.{suffix}'
+                      if p.exists():
+                          p.unlink()
+          for p in [res/'mipmap-anydpi-v26/ic_launcher.xml', res/'mipmap-anydpi-v26/ic_launcher_round.xml', res/'drawable/splash.png', res/'drawable-port/splash.png']:
+              if p.exists():
+                  p.unlink()
+          shutil.copyfile(icon, res/'drawable-nodpi/tikowiko_icon.jpg')
+          shutil.copyfile(splash, res/'drawable-nodpi/tikowiko_splash.jpg')
+          legacy = '''<?xml version="1.0" encoding="utf-8"?><bitmap xmlns:android="http://schemas.android.com/apk/res/android" android:src="@drawable/tikowiko_icon" android:gravity="center"/>'''
           for folder in densities:
-              (res/folder/'ic_launcher.xml').write_text(legacy,encoding='utf-8')
-              (res/folder/'ic_launcher_round.xml').write_text(legacy,encoding='utf-8')
-          # Inset Android adaptatif : évite l'icône entièrement grise/masquée par certains launchers.
-          (res/'drawable/tikowiko_icon_foreground.xml').write_text('''<?xml version="1.0" encoding="utf-8"?><inset xmlns:android="http://schemas.android.com/apk/res/android" android:drawable="@drawable/tikowiko_icon" android:inset="12%"/>''',encoding='utf-8')
-          adaptive='''<?xml version="1.0" encoding="utf-8"?><adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android"><background android:drawable="@android:color/white"/><foreground android:drawable="@drawable/tikowiko_icon_foreground"/></adaptive-icon>'''
-          (res/'mipmap-anydpi-v26/ic_launcher.xml').write_text(adaptive,encoding='utf-8')
-          (res/'mipmap-anydpi-v26/ic_launcher_round.xml').write_text(adaptive,encoding='utf-8')
-          splash_xml='''<?xml version="1.0" encoding="utf-8"?><layer-list xmlns:android="http://schemas.android.com/apk/res/android"><item android:drawable="@android:color/black"/><item><bitmap android:src="@drawable/tikowiko_splash" android:gravity="center"/></item></layer-list>'''
-          (res/'drawable/splash.xml').write_text(splash_xml,encoding='utf-8')
-          (res/'drawable-port/splash.xml').write_text(splash_xml,encoding='utf-8')
-          # Android 12+ impose son API SplashScreen. On affiche l'icône Tikowiko pendant ce très court écran système,
-          # puis le splash Capacitor utilise l'image verticale complète.
-          styles31=res/'values-v31/styles.xml'
-          styles31.write_text('''<?xml version="1.0" encoding="utf-8"?>
-<resources>
-  <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
-    <item name="windowSplashScreenBackground">@android:color/black</item>
-    <item name="windowSplashScreenAnimatedIcon">@drawable/tikowiko_icon_foreground</item>
-    <item name="postSplashScreenTheme">@style/AppTheme.NoActionBar</item>
-  </style>
-</resources>''',encoding='utf-8')
+              (res/folder/'ic_launcher.xml').write_text(legacy, encoding='utf-8')
+              (res/folder/'ic_launcher_round.xml').write_text(legacy, encoding='utf-8')
+          (res/'drawable/tikowiko_icon_foreground.xml').write_text('''<?xml version="1.0" encoding="utf-8"?><inset xmlns:android="http://schemas.android.com/apk/res/android" android:drawable="@drawable/tikowiko_icon" android:inset="12%"/>''', encoding='utf-8')
+          adaptive = '''<?xml version="1.0" encoding="utf-8"?><adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android"><background android:drawable="@android:color/white"/><foreground android:drawable="@drawable/tikowiko_icon_foreground"/></adaptive-icon>'''
+          (res/'mipmap-anydpi-v26/ic_launcher.xml').write_text(adaptive, encoding='utf-8')
+          (res/'mipmap-anydpi-v26/ic_launcher_round.xml').write_text(adaptive, encoding='utf-8')
+          splash_xml = '''<?xml version="1.0" encoding="utf-8"?><layer-list xmlns:android="http://schemas.android.com/apk/res/android"><item android:drawable="@android:color/black"/><item><bitmap android:src="@drawable/tikowiko_splash" android:gravity="center"/></item></layer-list>'''
+          (res/'drawable/splash.xml').write_text(splash_xml, encoding='utf-8')
+          (res/'drawable-port/splash.xml').write_text(splash_xml, encoding='utf-8')
           PY
 
-      - name: Construire l'APK debug
+      - name: Build debug APK
         working-directory: android
         run: |
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon
 
-      - name: Préparer l'APK
+      - name: Prepare APK
         run: |
           mkdir -p dist
           cp android/app/build/outputs/apk/debug/app-debug.apk dist/Tikowikointelligent-debug.apk
 
-      - name: Publier l'APK dans la Release GitHub
+      - name: Publish release APK
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release delete apk-latest --cleanup-tag -y --repo "$GITHUB_REPOSITORY" 2>/dev/null || true
-          gh release create apk-latest dist/Tikowikointelligent-debug.apk --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Tikowiko Smart Assistant — APK" --notes "Dernière version APK debug de Tikowiko Smart Assistant."
+          gh release create apk-latest dist/Tikowikointelligent-debug.apk --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Tikowiko Smart Assistant - APK" --notes "Derniere version APK debug de Tikowiko Smart Assistant."
