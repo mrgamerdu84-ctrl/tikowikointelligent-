@@ -1,7 +1,7 @@
 package com.tikowiko.intelligent;
 
 import android.content.Intent;
-import android.os.Bundle;
+import android.os.RemoteException;
 import android.speech.RecognitionService;
 
 /**
@@ -11,8 +11,11 @@ import android.speech.RecognitionService;
 public class TikowikoRecognitionService extends RecognitionService {
     @Override
     protected void onStartListening(Intent recognizerIntent, Callback listener) {
-        Bundle extras = new Bundle();
-        listener.error(android.speech.SpeechRecognizer.ERROR_RECOGNIZER_BUSY);
+        try {
+            listener.error(android.speech.SpeechRecognizer.ERROR_RECOGNIZER_BUSY);
+        } catch (RemoteException ignored) {
+            // Le client a pu disparaître entre-temps ; rien d'autre à faire.
+        }
     }
 
     @Override
