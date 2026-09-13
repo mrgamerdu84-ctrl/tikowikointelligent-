@@ -53,10 +53,8 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
-
           manifest = Path('android/app/src/main/AndroidManifest.xml')
           text = manifest.read_text(encoding='utf-8')
-
           permissions = [
               '<uses-permission android:name="android.permission.RECORD_AUDIO" />',
               '<uses-permission android:name="android.permission.READ_CONTACTS" />',
@@ -68,50 +66,29 @@ jobs:
               '<uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />',
               '<uses-permission android:name="android.permission.WAKE_LOCK" />',
           ]
-
           for permission in permissions:
               if permission not in text:
                   text = text.replace('<application', permission + '\n\n    <application', 1)
-
           clap_service = '''        <service
               android:name=".ClapDetectionService"
               android:exported="false"
               android:stopWithTask="false"
               android:foregroundServiceType="microphone" />\n'''
-
           if 'android:name=".ClapDetectionService"' not in text:
               text = text.replace('    </application>', clap_service + '    </application>', 1)
-
           assistant_services = '''        <service
               android:name=".TikowikoVoiceInteractionService"
               android:permission="android.permission.BIND_VOICE_INTERACTION"
               android:exported="true">
-              <intent-filter>
-                  <action android:name="android.service.voice.VoiceInteractionService" />
-              </intent-filter>
-              <meta-data
-                  android:name="android.voice_interaction"
-                  android:resource="@xml/voice_interaction_service" />
+              <intent-filter><action android:name="android.service.voice.VoiceInteractionService" /></intent-filter>
+              <meta-data android:name="android.voice_interaction" android:resource="@xml/voice_interaction_service" />
           </service>
-
-          <service
-              android:name=".TikowikoVoiceInteractionSessionService"
-              android:permission="android.permission.BIND_VOICE_INTERACTION"
-              android:exported="true"
-              android:process=":voice_session" />
-
-          <service
-              android:name=".TikowikoRecognitionService"
-              android:permission="android.permission.BIND_SPEECH_RECOGNITION_SERVICE"
-              android:exported="true">
-              <intent-filter>
-                  <action android:name="android.speech.RecognitionService" />
-              </intent-filter>
+          <service android:name=".TikowikoVoiceInteractionSessionService" android:permission="android.permission.BIND_VOICE_INTERACTION" android:exported="true" android:process=":voice_session" />
+          <service android:name=".TikowikoRecognitionService" android:permission="android.permission.BIND_SPEECH_RECOGNITION_SERVICE" android:exported="true">
+              <intent-filter><action android:name="android.speech.RecognitionService" /></intent-filter>
           </service>\n'''
-
           if 'android:name=".TikowikoVoiceInteractionService"' not in text:
               text = text.replace('    </application>', assistant_services + '    </application>', 1)
-
           manifest.write_text(text, encoding='utf-8')
           PY
 
@@ -123,85 +100,47 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           import shutil
-
           icon = Path('android-assets/tikowiko-icon.jpg')
           splash = Path('android-assets/tikowiko-splash.jpg')
           if not icon.exists() or not splash.exists():
-              raise SystemExit('Les images exactes Tikowiko ne sont pas encore présentes dans android-assets/')
-
+              raise SystemExit('Visuels Tikowiko absents')
           res = Path('android/app/src/main/res')
-          density_folders = ['mipmap-hdpi', 'mipmap-mdpi', 'mipmap-xhdpi', 'mipmap-xxhdpi', 'mipmap-xxxhdpi']
-          for folder in ['drawable', 'drawable-port', 'drawable-nodpi', 'mipmap-anydpi-v26', *density_folders]:
-              (res / folder).mkdir(parents=True, exist_ok=True)
-
-          # Supprime les ressources générées par défaut qui empêchent Android d'utiliser
-          # les visuels Tikowiko. Les images source sont copiées sans retouche.
-          for folder in density_folders:
-              for suffix in ['png', 'webp', 'jpg']:
-                  for stem in ['ic_launcher', 'ic_launcher_round', 'ic_launcher_foreground']:
-                      path = res / folder / f'{stem}.{suffix}'
-                      if path.exists():
-                          path.unlink()
-
-          for path in [
-              res / 'drawable' / 'splash.png',
-              res / 'drawable-port' / 'splash.png',
-              res / 'drawable' / 'splash.jpg',
-              res / 'drawable-port' / 'splash.jpg',
-              res / 'mipmap-anydpi-v26' / 'ic_launcher.xml',
-              res / 'mipmap-anydpi-v26' / 'ic_launcher_round.xml',
-          ]:
-              if path.exists():
-                  path.unlink()
-
-          # Copie exacte des deux fichiers fournis.
-          shutil.copyfile(icon, res / 'drawable-nodpi' / 'tikowiko_icon.jpg')
-          shutil.copyfile(splash, res / 'drawable-nodpi' / 'tikowiko_splash.jpg')
-
-          # Icône classique : référence vers l'image exacte, sans redimensionnement généré.
-          for folder in density_folders:
-              (res / folder / 'ic_launcher.xml').write_text(
-                  '<?xml version="1.0" encoding="utf-8"?>\n'
-                  '<bitmap xmlns:android="http://schemas.android.com/apk/res/android" '
-                  'android:src="@drawable/tikowiko_icon" android:gravity="center" />\n',
-                  encoding='utf-8'
-              )
-              (res / folder / 'ic_launcher_round.xml').write_text(
-                  '<?xml version="1.0" encoding="utf-8"?>\n'
-                  '<bitmap xmlns:android="http://schemas.android.com/apk/res/android" '
-                  'android:src="@drawable/tikowiko_icon" android:gravity="center" />\n',
-                  encoding='utf-8'
-              )
-
-          # Icône adaptative Android 8+ : garde le visuel exact comme foreground.
-          adaptive = '''<?xml version="1.0" encoding="utf-8"?>
-          <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
-              <background android:drawable="@android:color/black" />
-              <foreground android:drawable="@drawable/tikowiko_icon" />
-          </adaptive-icon>\n'''
-          (res / 'mipmap-anydpi-v26' / 'ic_launcher.xml').write_text(adaptive, encoding='utf-8')
-          (res / 'mipmap-anydpi-v26' / 'ic_launcher_round.xml').write_text(adaptive, encoding='utf-8')
-
-          # Écran de démarrage plein écran basé directement sur l'image fournie.
-          splash_xml = '''<?xml version="1.0" encoding="utf-8"?>
-          <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-              <item android:drawable="@android:color/black" />
-              <item>
-                  <bitmap android:src="@drawable/tikowiko_splash" android:gravity="fill" />
-              </item>
-          </layer-list>\n'''
-          (res / 'drawable' / 'splash.xml').write_text(splash_xml, encoding='utf-8')
-          (res / 'drawable-port' / 'splash.xml').write_text(splash_xml, encoding='utf-8')
-
-          # Android 12+ : force le thème de lancement à utiliser Tikowiko.
-          for values_dir in [res / 'values', res / 'values-v31']:
-              values_dir.mkdir(parents=True, exist_ok=True)
-              styles = values_dir / 'styles.xml'
-              if not styles.exists():
-                  continue
-              text = styles.read_text(encoding='utf-8')
-              text = text.replace('@drawable/splash', '@drawable/splash')
-              styles.write_text(text, encoding='utf-8')
+          densities = ['mipmap-mdpi','mipmap-hdpi','mipmap-xhdpi','mipmap-xxhdpi','mipmap-xxxhdpi']
+          for folder in ['drawable','drawable-port','drawable-nodpi','mipmap-anydpi-v26','values-v31',*densities]:
+              (res/folder).mkdir(parents=True, exist_ok=True)
+          for folder in densities:
+              for stem in ['ic_launcher','ic_launcher_round','ic_launcher_foreground']:
+                  for suffix in ['png','webp','jpg','xml']:
+                      p=res/folder/f'{stem}.{suffix}'
+                      if p.exists(): p.unlink()
+          for p in [res/'mipmap-anydpi-v26/ic_launcher.xml',res/'mipmap-anydpi-v26/ic_launcher_round.xml',res/'drawable/splash.png',res/'drawable-port/splash.png']:
+              if p.exists(): p.unlink()
+          # Les deux fichiers utilisateur sont copiés octet pour octet : aucune retouche de l'image source.
+          shutil.copyfile(icon,res/'drawable-nodpi/tikowiko_icon.jpg')
+          shutil.copyfile(splash,res/'drawable-nodpi/tikowiko_splash.jpg')
+          legacy='''<?xml version="1.0" encoding="utf-8"?><bitmap xmlns:android="http://schemas.android.com/apk/res/android" android:src="@drawable/tikowiko_icon" android:gravity="center"/>'''
+          for folder in densities:
+              (res/folder/'ic_launcher.xml').write_text(legacy,encoding='utf-8')
+              (res/folder/'ic_launcher_round.xml').write_text(legacy,encoding='utf-8')
+          # Inset Android adaptatif : évite l'icône entièrement grise/masquée par certains launchers.
+          (res/'drawable/tikowiko_icon_foreground.xml').write_text('''<?xml version="1.0" encoding="utf-8"?><inset xmlns:android="http://schemas.android.com/apk/res/android" android:drawable="@drawable/tikowiko_icon" android:inset="12%"/>''',encoding='utf-8')
+          adaptive='''<?xml version="1.0" encoding="utf-8"?><adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android"><background android:drawable="@android:color/white"/><foreground android:drawable="@drawable/tikowiko_icon_foreground"/></adaptive-icon>'''
+          (res/'mipmap-anydpi-v26/ic_launcher.xml').write_text(adaptive,encoding='utf-8')
+          (res/'mipmap-anydpi-v26/ic_launcher_round.xml').write_text(adaptive,encoding='utf-8')
+          splash_xml='''<?xml version="1.0" encoding="utf-8"?><layer-list xmlns:android="http://schemas.android.com/apk/res/android"><item android:drawable="@android:color/black"/><item><bitmap android:src="@drawable/tikowiko_splash" android:gravity="center"/></item></layer-list>'''
+          (res/'drawable/splash.xml').write_text(splash_xml,encoding='utf-8')
+          (res/'drawable-port/splash.xml').write_text(splash_xml,encoding='utf-8')
+          # Android 12+ impose son API SplashScreen. On affiche l'icône Tikowiko pendant ce très court écran système,
+          # puis le splash Capacitor utilise l'image verticale complète.
+          styles31=res/'values-v31/styles.xml'
+          styles31.write_text('''<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
+    <item name="windowSplashScreenBackground">@android:color/black</item>
+    <item name="windowSplashScreenAnimatedIcon">@drawable/tikowiko_icon_foreground</item>
+    <item name="postSplashScreenTheme">@style/AppTheme.NoActionBar</item>
+  </style>
+</resources>''',encoding='utf-8')
           PY
 
       - name: Construire l'APK debug
@@ -220,9 +159,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release delete apk-latest --cleanup-tag -y --repo "$GITHUB_REPOSITORY" 2>/dev/null || true
-          gh release create apk-latest \
-            dist/Tikowikointelligent-debug.apk \
-            --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" \
-            --title "Tikowikointelligent — APK" \
-            --notes "Dernière version APK debug de Tikowikointelligent, générée automatiquement par GitHub Actions."
+          gh release create apk-latest dist/Tikowikointelligent-debug.apk --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Tikowiko Smart Assistant — APK" --notes "Dernière version APK debug de Tikowiko Smart Assistant."
