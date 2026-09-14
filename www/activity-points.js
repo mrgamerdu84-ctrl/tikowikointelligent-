@@ -1,6 +1,7 @@
 const ActivityPoints = window.Capacitor?.Plugins?.ActivityPoints;
 
 const TIKO_ACTIVITY_KEY = 'tikowiko_activity_points_v1';
+const TIKO_PERMISSION_SESSION_KEY = 'tikowiko_activity_permission_asked';
 const TIKO_REWARDS = [
   { steps: 2000, points: 20, reward: 'Badge Marcheur' },
   { steps: 5000, points: 50, reward: 'Thème Néon Bleu' },
@@ -33,6 +34,10 @@ async function getActivitySnapshot() {
   let sensorAvailable = false;
   let permissionRequired = false;
   let permissionGranted = true;
+  let listenersRegistered = false;
+  let stepCounterAvailable = false;
+  let stepDetectorAvailable = false;
+
   if (ActivityPoints?.getToday) {
     try {
       const r = await ActivityPoints.getToday();
@@ -40,14 +45,51 @@ async function getActivitySnapshot() {
       sensorAvailable = !!r?.sensorAvailable;
       permissionRequired = !!r?.activityPermissionRequired;
       permissionGranted = !!r?.activityPermissionGranted;
-    } catch (_) {}
+      listenersRegistered = !!r?.listenersRegistered;
+      stepCounterAvailable = !!r?.stepCounterAvailable;
+      stepDetectorAvailable = !!r?.stepDetectorAvailable;
+    } catch (e) {
+      console.warn('Tikowiko ActivityPoints indisponible', e);
+    }
   }
-  return { steps, sensorAvailable, permissionRequired, permissionGranted };
+
+  return {
+    steps,
+    sensorAvailable,
+    permissionRequired,
+    permissionGranted,
+    listenersRegistered,
+    stepCounterAvailable,
+    stepDetectorAvailable
+  };
+}
+
+async function ensureActivityAccess() {
+  if (!ActivityPoints?.getToday) return;
+
+  const snap = await getActivitySnapshot();
+  if (!snap.sensorAvailable) return;
+
+  if (snap.permissionRequired && !snap.permissionGranted) {
+    if (sessionStorage.getItem(TIKO_PERMISSION_SESSION_KEY) === '1') return;
+    sessionStorage.setItem(TIKO_PERMISSION_SESSION_KEY, '1');
+    try {
+      await ActivityPoints.requestActivityPermission();
+    } catch (e) {
+      console.warn('Autorisation activité physique non accordée', e);
+    }
+
+    setTimeout(async () => {
+      await refreshActivityPanel();
+      if (typeof window.refreshTikowikoHome === 'function') {
+        window.refreshTikowikoHome();
+      }
+    }, 1200);
+  }
 }
 
 async function refreshActivityPanel() {
   const panel = document.getElementById('activityPanel');
-  if (!panel) return;
   const snap = await getActivitySnapshot();
   const state = loadActivityState();
   const max = 10000;
@@ -68,11 +110,13 @@ async function refreshActivityPanel() {
   const permissionBox = document.getElementById('activityPermissionBox');
   if (permissionBox) {
     if (!snap.sensorAvailable) {
-      permissionBox.innerHTML = 'Le compteur de pas matériel n’est pas disponible sur ce téléphone.';
+      permissionBox.innerHTML = 'Aucun capteur de pas Android compatible n’a été détecté sur ce téléphone.';
     } else if (snap.permissionRequired && !snap.permissionGranted) {
-      permissionBox.innerHTML = '<button class="action-btn" onclick="requestActivityAccess()">Autoriser l’activité physique</button>';
+      permissionBox.innerHTML = '<button class="action" onclick="requestActivityAccess()">Autoriser l’activité physique</button><div style="margin-top:8px">Tikowiko a besoin de cette autorisation pour compter tes pas.</div>';
+    } else if (!snap.listenersRegistered) {
+      permissionBox.textContent = 'Le capteur est présent, mais il n’est pas encore actif. Rouvre cette page dans quelques secondes.';
     } else {
-      permissionBox.textContent = 'Pas comptés localement par le capteur Android. Aucun GPS permanent.';
+      permissionBox.textContent = 'Compteur de pas actif. Les nouveaux pas sont comptés localement par Android.';
     }
   }
 
@@ -81,7 +125,7 @@ async function refreshActivityPanel() {
     rewardsEl.innerHTML = TIKO_REWARDS.map(r => {
       const reached = snap.steps >= r.steps;
       const claimed = !!state.claimed[r.steps];
-      return `<div class="reward-row ${reached ? 'reached' : ''}"><div><b>${r.steps.toLocaleString('fr-FR')} pas</b><span>${r.reward} · +${r.points} pts</span></div>${reached && !claimed ? `<button class="action-btn" onclick="claimActivityReward(${r.steps})">Récupérer</button>` : `<span class="reward-state">${claimed ? 'Récupérée' : 'Verrouillée'}</span>`}</div>`;
+      return `<div class="reward-row ${reached ? 'reached' : ''}"><div><b>${r.steps.toLocaleString('fr-FR')} pas</b><span>${r.reward} · +${r.points} pts</span></div>${reached && !claimed ? `<button class="action" onclick="claimActivityReward(${r.steps})">Récupérer</button>` : `<span class="reward-state">${claimed ? 'Récupérée' : 'Verrouillée'}</span>`}</div>`;
     }).join('');
   }
 
@@ -90,12 +134,22 @@ async function refreshActivityPanel() {
     banner.style.display = pending.length ? 'block' : 'none';
     banner.textContent = pending.length ? 'Récompense débloquée !' : '';
   }
+
+  return snap;
 }
 
 async function requestActivityAccess() {
-  if (ActivityPoints?.requestActivityPermission) {
+  if (!ActivityPoints?.requestActivityPermission) return;
+  try {
+    sessionStorage.setItem(TIKO_PERMISSION_SESSION_KEY, '1');
     await ActivityPoints.requestActivityPermission();
-    setTimeout(refreshActivityPanel, 700);
+  } finally {
+    setTimeout(async () => {
+      await refreshActivityPanel();
+      if (typeof window.refreshTikowikoHome === 'function') {
+        window.refreshTikowikoHome();
+      }
+    }, 1200);
   }
 }
 
@@ -115,6 +169,7 @@ async function claimActivityReward(stepTarget) {
 
 async function openActivityPanel() {
   document.getElementById('activityPanel')?.classList.add('open');
+  await ensureActivityAccess();
   await refreshActivityPanel();
 }
 
@@ -146,3 +201,10 @@ window.refreshActivityPanel = refreshActivityPanel;
 window.requestActivityAccess = requestActivityAccess;
 window.claimActivityReward = claimActivityReward;
 window.handleActivityVoiceCommand = handleActivityVoiceCommand;
+window.getActivitySnapshot = getActivitySnapshot;
+window.loadActivityState = loadActivityState;
+window.ensureActivityAccess = ensureActivityAccess;
+
+window.addEventListener('DOMContentLoaded', () => {
+  setTimeout(ensureActivityAccess, 700);
+});
