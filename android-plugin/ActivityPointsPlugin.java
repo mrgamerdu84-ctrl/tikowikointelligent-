@@ -56,12 +56,6 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
     }
 
     @Override
-    protected void handleOnPause() {
-        super.handleOnPause();
-        // On garde les capteurs actifs tant que le processus de l'app existe.
-    }
-
-    @Override
     protected void handleOnDestroy() {
         unregisterSensors();
         super.handleOnDestroy();
@@ -81,14 +75,13 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
     }
 
     private void registerSensorsIfAllowed() {
-        if (sensorManager == null || !permissionGranted()) return;
-        if (listenersRegistered) return;
+        if (sensorManager == null || !permissionGranted() || listenersRegistered) return;
 
         boolean registered = false;
         if (stepCounter != null) {
             registered = sensorManager.registerListener(this, stepCounter, SensorManager.SENSOR_DELAY_NORMAL) || registered;
         }
-        if (stepDetector != null) {
+        if (stepDetector != null && stepCounter == null) {
             registered = sensorManager.registerListener(this, stepDetector, SensorManager.SENSOR_DELAY_NORMAL) || registered;
         }
         listenersRegistered = registered;
@@ -135,6 +128,47 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
                 .apply();
     }
 
+    /**
+     * Synchronise le compteur logiciel avec TYPE_STEP_COUNTER.
+     * TYPE_STEP_COUNTER est cumulatif depuis le dernier redémarrage Android :
+     * il continue donc à augmenter même si Tikowiko est fermé. Lors de la
+     * prochaine lecture, on ajoute simplement le delta qui s'est produit
+     * pendant la fermeture de l'application.
+     */
+    private void syncFromSystemCounter(float total) {
+        rolloverIfNeeded();
+
+        if (lastCounter < 0f) {
+            if (counterBase < 0f) {
+                counterBase = total - todaySteps;
+                if (counterBase < 0f) counterBase = total;
+            }
+            lastCounter = total;
+
+            int candidate = Math.max(todaySteps, Math.round(total - counterBase));
+            todaySteps = candidate;
+            save();
+            return;
+        }
+
+        if (total < lastCounter) {
+            // Téléphone redémarré : le compteur Android repart à zéro.
+            counterBase = total - todaySteps;
+            if (counterBase < 0f) counterBase = total;
+            lastCounter = total;
+            save();
+            return;
+        }
+
+        float delta = total - lastCounter;
+        if (delta >= 0f && delta < 100000f) {
+            todaySteps += Math.round(delta);
+            lastCounter = total;
+            counterBase = total - todaySteps;
+            save();
+        }
+    }
+
     @PluginMethod
     public void getToday(PluginCall call) {
         rolloverIfNeeded();
@@ -148,6 +182,7 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
         result.put("activityPermissionRequired", Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q);
         result.put("activityPermissionGranted", permissionGranted());
         result.put("listenersRegistered", listenersRegistered);
+        result.put("countsWhileClosed", stepCounter != null);
         result.put("day", dayKey);
         call.resolve(result);
     }
@@ -177,29 +212,14 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
     @Override
     public void onSensorChanged(SensorEvent event) {
         if (!permissionGranted()) return;
-        rolloverIfNeeded();
 
         if (event.sensor.getType() == Sensor.TYPE_STEP_COUNTER) {
-            float total = event.values[0];
-
-            if (counterBase < 0f || (lastCounter >= 0f && total < lastCounter)) {
-                // Première lecture du jour ou redémarrage du téléphone :
-                // on commence à compter à partir de cette valeur système.
-                counterBase = total - todaySteps;
-                if (counterBase < 0f) counterBase = total;
-            }
-
-            lastCounter = total;
-            int candidate = Math.max(0, Math.round(total - counterBase));
-            if (candidate >= todaySteps && candidate - todaySteps < 5000) {
-                todaySteps = candidate;
-                save();
-            }
+            syncFromSystemCounter(event.values[0]);
             return;
         }
 
         if (event.sensor.getType() == Sensor.TYPE_STEP_DETECTOR && stepCounter == null) {
-            // Secours pour les téléphones sans TYPE_STEP_COUNTER.
+            rolloverIfNeeded();
             int detected = Math.max(1, Math.round(event.values[0]));
             todaySteps += detected;
             save();
