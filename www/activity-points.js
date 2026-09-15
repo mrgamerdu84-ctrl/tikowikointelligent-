@@ -1,12 +1,71 @@
 const ActivityPoints = window.Capacitor?.Plugins?.ActivityPoints;
+const TikowikoTts = window.Capacitor?.Plugins?.TikowikoTts;
 
 const TIKO_ACTIVITY_KEY = 'tikowiko_activity_points_v1';
 const TIKO_PERMISSION_SESSION_KEY = 'tikowiko_activity_permission_asked';
+const TIKO_VOICE_KEY = 'tikowiko_voice_profile';
 const TIKO_REWARDS = [
   { steps: 2000, points: 20, reward: 'Badge Marcheur' },
   { steps: 5000, points: 50, reward: 'Thème Néon Bleu' },
   { steps: 10000, points: 100, reward: 'Style de boutons Énergie' }
 ];
+
+function getTikowikoVoiceProfile() {
+  const saved = localStorage.getItem(TIKO_VOICE_KEY);
+  return ['robot','femme','homme'].includes(saved) ? saved : 'robot';
+}
+
+function setTikowikoVoiceProfile(profile) {
+  const safe = ['robot','femme','homme'].includes(profile) ? profile : 'robot';
+  localStorage.setItem(TIKO_VOICE_KEY, safe);
+  return safe;
+}
+
+async function speakTikowiko(text) {
+  const message = String(text || '').trim();
+  if (!message) return;
+  const profile = getTikowikoVoiceProfile();
+
+  if (TikowikoTts?.speak) {
+    try {
+      await TikowikoTts.speak({ text: message, voice: profile });
+      return;
+    } catch (e) {
+      console.warn('Voix native Tikowiko indisponible', e);
+    }
+  }
+
+  if ('speechSynthesis' in window) {
+    try {
+      window.speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(message);
+      u.lang = 'fr-FR';
+      if (profile === 'robot') { u.pitch = 0.75; u.rate = 0.9; }
+      if (profile === 'femme') { u.pitch = 1.2; u.rate = 1.0; }
+      if (profile === 'homme') { u.pitch = 0.82; u.rate = 0.95; }
+      window.speechSynthesis.speak(u);
+    } catch (e) {
+      console.warn('Synthèse vocale web indisponible', e);
+    }
+  }
+}
+
+function installVoiceSelector() {
+  const content = document.querySelector('#settingsPanel .content');
+  if (!content || document.getElementById('tikowikoVoiceSelect')) return;
+  const card = document.createElement('div');
+  card.className = 'settings-card';
+  card.innerHTML = '<div style="margin-bottom:8px">Voix de Tikowiko</div><div class="setting-help" style="margin-bottom:10px">Choisis le style de voix utilisé pour les réponses du chat.</div><select id="tikowikoVoiceSelect" style="width:100%;padding:10px;border-radius:10px;background:#0b2348;color:white;border:1px solid #1fe5ff"><option value="robot">🤖 Robot</option><option value="femme">👩 Voix femme</option><option value="homme">👨 Voix homme</option></select><button class="action" id="tikowikoVoiceTest" style="margin-top:10px">Tester la voix</button>';
+  content.appendChild(card);
+
+  const select = card.querySelector('#tikowikoVoiceSelect');
+  select.value = getTikowikoVoiceProfile();
+  select.addEventListener('change', () => setTikowikoVoiceProfile(select.value));
+  card.querySelector('#tikowikoVoiceTest').addEventListener('click', () => {
+    setTikowikoVoiceProfile(select.value);
+    speakTikowiko('Bonjour, je suis Tikowiko. Cette voix est maintenant sélectionnée.');
+  });
+}
 
 function ensureMilestoneProgressStyle() {
   if (document.getElementById('tikoMilestoneProgressStyle')) return;
@@ -204,7 +263,9 @@ async function claimActivityReward(stepTarget) {
   state.points += reward.points;
   if (!state.rewards.includes(reward.reward)) state.rewards.push(reward.reward);
   saveActivityState(state);
-  addBubble?.(`Récompense récupérée : ${reward.reward}. +${reward.points} points.`, 'system');
+  const message = `Récompense récupérée : ${reward.reward}. +${reward.points} points.`;
+  addBubble?.(message, 'system');
+  speakTikowiko(message);
   refreshActivityPanel();
 }
 
@@ -229,10 +290,14 @@ async function handleActivityVoiceCommand(text) {
   const snap = await getActivitySnapshot();
   const state = loadActivityState();
   const next = TIKO_REWARDS.find(r => snap.steps < r.steps) || null;
-  if (asksSteps) addBubble(`${snap.steps.toLocaleString('fr-FR')} pas aujourd’hui.`, 'system');
-  else if (asksNext) addBubble(next ? `Il te reste ${Math.max(0, next.steps - snap.steps).toLocaleString('fr-FR')} pas avant la prochaine récompense.` : 'Tu as atteint tous les paliers du jour.', 'system');
-  else if (asksReward) addBubble(next ? `Ta prochaine récompense est ${next.reward}, à ${next.steps.toLocaleString('fr-FR')} pas.` : 'Toutes les récompenses du jour sont atteintes.', 'system');
-  else if (asksPoints) addBubble(`Tu as ${state.points.toLocaleString('fr-FR')} points Tikowiko.`, 'system');
+  let answer = '';
+  if (asksSteps) answer = `${snap.steps.toLocaleString('fr-FR')} pas aujourd’hui.`;
+  else if (asksNext) answer = next ? `Il te reste ${Math.max(0, next.steps - snap.steps).toLocaleString('fr-FR')} pas avant la prochaine récompense.` : 'Tu as atteint tous les paliers du jour.';
+  else if (asksReward) answer = next ? `Ta prochaine récompense est ${next.reward}, à ${next.steps.toLocaleString('fr-FR')} pas.` : 'Toutes les récompenses du jour sont atteintes.';
+  else if (asksPoints) answer = `Tu as ${state.points.toLocaleString('fr-FR')} points Tikowiko.`;
+
+  addBubble?.(answer, 'system');
+  await speakTikowiko(answer);
   return true;
 }
 
@@ -247,8 +312,12 @@ window.loadActivityState = loadActivityState;
 window.ensureActivityAccess = ensureActivityAccess;
 window.updateMilestoneProgress = updateMilestoneProgress;
 window.updateProgressMessage = updateProgressMessage;
+window.speakTikowiko = speakTikowiko;
+window.getTikowikoVoiceProfile = getTikowikoVoiceProfile;
+window.setTikowikoVoiceProfile = setTikowikoVoiceProfile;
 
 window.addEventListener('DOMContentLoaded', () => {
+  installVoiceSelector();
   updateMilestoneProgress(0);
   updateProgressMessage(0);
   setTimeout(ensureActivityAccess, 700);
