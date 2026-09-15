@@ -116,12 +116,8 @@ jobs:
 
       - name: Install Tikowiko web robot
         run: |
-          test -s www/tikowiko-robot.jpg
-          mkdir -p www/assets
-          cp www/tikowiko-robot.jpg www/assets/tikowiko-robot.jpg
-          mkdir -p android/app/src/main/assets/public/assets
-          cp www/tikowiko-robot.jpg android/app/src/main/assets/public/assets/tikowiko-robot.jpg
-          test -s android/app/src/main/assets/public/assets/tikowiko-robot.jpg
+          test -s www/lv_0_20260916003429.jpg
+          test -s android/app/src/main/assets/public/lv_0_20260916003429.jpg
 
       - name: Install Tikowiko visuals
         run: |
@@ -140,11 +136,9 @@ jobs:
               for stem in ['ic_launcher','ic_launcher_round','ic_launcher_foreground']:
                   for suffix in ['png','webp','jpg','xml']:
                       p = res / folder / f'{stem}.{suffix}'
-                      if p.exists():
-                          p.unlink()
+                      if p.exists(): p.unlink()
           for p in [res/'mipmap-anydpi-v26/ic_launcher.xml', res/'mipmap-anydpi-v26/ic_launcher_round.xml', res/'drawable/splash.png', res/'drawable-port/splash.png']:
-              if p.exists():
-                  p.unlink()
+              if p.exists(): p.unlink()
           shutil.copyfile(icon, res/'drawable-nodpi/tikowiko_icon.jpg')
           shutil.copyfile(splash, res/'drawable-nodpi/tikowiko_splash.jpg')
           legacy = '''<?xml version="1.0" encoding="utf-8"?><bitmap xmlns:android="http://schemas.android.com/apk/res/android" android:src="@drawable/tikowiko_icon" android:gravity="center"/>'''
