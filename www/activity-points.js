@@ -25,6 +25,27 @@ function updateMilestoneProgress(steps) {
   bar.style.setProperty('--milestone-progress', `${pct}%`);
 }
 
+function updateProgressMessage(steps) {
+  const box = document.querySelector('.encouragement');
+  if (!box) return;
+
+  const safeSteps = Math.max(0, Number(steps) || 0);
+  if (safeSteps <= 0) {
+    box.style.display = 'none';
+    return;
+  }
+
+  box.style.display = '';
+  const nextTarget = [2000, 5000, 10000].find(target => safeSteps < target);
+  if (!nextTarget) {
+    box.innerHTML = '🏁 Bravo ! Objectif du jour atteint !';
+    return;
+  }
+
+  const remaining = Math.max(0, nextTarget - safeSteps);
+  box.innerHTML = `🚀 Bravo ! Tu fais des progrès !<br>Encore <strong>${remaining.toLocaleString('fr-FR')}</strong> pas avant ta prochaine récompense !`;
+}
+
 function tikoDayKey() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -71,6 +92,7 @@ async function getActivitySnapshot() {
   }
 
   updateMilestoneProgress(steps);
+  updateProgressMessage(steps);
 
   return {
     steps,
@@ -224,8 +246,10 @@ window.getActivitySnapshot = getActivitySnapshot;
 window.loadActivityState = loadActivityState;
 window.ensureActivityAccess = ensureActivityAccess;
 window.updateMilestoneProgress = updateMilestoneProgress;
+window.updateProgressMessage = updateProgressMessage;
 
 window.addEventListener('DOMContentLoaded', () => {
   updateMilestoneProgress(0);
+  updateProgressMessage(0);
   setTimeout(ensureActivityAccess, 700);
 });
