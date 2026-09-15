@@ -8,6 +8,23 @@ const TIKO_REWARDS = [
   { steps: 10000, points: 100, reward: 'Style de boutons Énergie' }
 ];
 
+function ensureMilestoneProgressStyle() {
+  if (document.getElementById('tikoMilestoneProgressStyle')) return;
+  const style = document.createElement('style');
+  style.id = 'tikoMilestoneProgressStyle';
+  style.textContent = '.milestones{--milestone-progress:0%}.milestones:before{background:linear-gradient(90deg,#32f58b 0 var(--milestone-progress),#46546e var(--milestone-progress) 100%) !important}';
+  document.head.appendChild(style);
+}
+
+function updateMilestoneProgress(steps) {
+  ensureMilestoneProgressStyle();
+  const bar = document.querySelector('.milestones');
+  if (!bar) return;
+  const safeSteps = Math.max(0, Number(steps) || 0);
+  const pct = Math.max(0, Math.min(100, (safeSteps / 10000) * 100));
+  bar.style.setProperty('--milestone-progress', `${pct}%`);
+}
+
 function tikoDayKey() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -52,6 +69,8 @@ async function getActivitySnapshot() {
       console.warn('Tikowiko ActivityPoints indisponible', e);
     }
   }
+
+  updateMilestoneProgress(steps);
 
   return {
     steps,
@@ -204,7 +223,9 @@ window.handleActivityVoiceCommand = handleActivityVoiceCommand;
 window.getActivitySnapshot = getActivitySnapshot;
 window.loadActivityState = loadActivityState;
 window.ensureActivityAccess = ensureActivityAccess;
+window.updateMilestoneProgress = updateMilestoneProgress;
 
 window.addEventListener('DOMContentLoaded', () => {
+  updateMilestoneProgress(0);
   setTimeout(ensureActivityAccess, 700);
 });
