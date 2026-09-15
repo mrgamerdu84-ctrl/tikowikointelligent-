@@ -97,10 +97,11 @@ jobs:
 
       - name: Install Tikowiko web robot
         run: |
+          test -s www/tikowiko-robot.jpg
           mkdir -p www/assets
-          cp android-assets/tikowiko-icon.jpg www/assets/tikowiko-robot.jpg
+          cp www/tikowiko-robot.jpg www/assets/tikowiko-robot.jpg
           mkdir -p android/app/src/main/assets/public/assets
-          cp android-assets/tikowiko-icon.jpg android/app/src/main/assets/public/assets/tikowiko-robot.jpg
+          cp www/tikowiko-robot.jpg android/app/src/main/assets/public/assets/tikowiko-robot.jpg
           test -s android/app/src/main/assets/public/assets/tikowiko-robot.jpg
 
       - name: Install Tikowiko visuals
