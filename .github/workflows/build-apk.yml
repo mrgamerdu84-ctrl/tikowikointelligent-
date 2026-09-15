@@ -95,6 +95,23 @@ jobs:
       - name: Sync Capacitor
         run: npx cap sync android
 
+      - name: Install activity UI correction
+        run: |
+          test -s www/activity-ui-fix.js
+          test -s android/app/src/main/assets/public/activity-ui-fix.js
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('android/app/src/main/assets/public/index.html')
+          text = p.read_text(encoding='utf-8')
+          marker = '<script src="activity-ui-fix.js"></script>'
+          if marker not in text:
+              if '</body>' in text:
+                  text = text.replace('</body>', marker + '</body>', 1)
+              else:
+                  text += marker
+          p.write_text(text, encoding='utf-8')
+          PY
+
       - name: Install Tikowiko web robot
         run: |
           test -s www/tikowiko-robot.jpg
