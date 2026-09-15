@@ -21,7 +21,8 @@ public class WhistlePlugin extends Plugin {
     }
 
     private boolean hasMicPermission() {
-        return ContextCompat.checkSelfPermission(getContext(), Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
+        return ContextCompat.checkSelfPermission(getContext(), Manifest.permission.RECORD_AUDIO)
+                == PackageManager.PERMISSION_GRANTED;
     }
 
     private JSObject status() {
@@ -31,13 +32,17 @@ public class WhistlePlugin extends Plugin {
         out.put("stage", p.getString(WhistleDetectionService.PREF_STAGE, "Désactivé"));
         out.put("stageAt", p.getLong(WhistleDetectionService.PREF_STAGE_AT, 0L));
         out.put("frequency", p.getFloat(WhistleDetectionService.PREF_FREQ, 0f));
+        out.put("thresholdDb", p.getFloat(WhistleDetectionService.PREF_THRESHOLD_DB, -45f));
         out.put("microphonePermission", hasMicPermission());
         return out;
     }
 
     @PluginMethod
     public void start(PluginCall call) {
-        if (!hasMicPermission()) { call.reject("PERMISSION_MICRO_REQUIRED"); return; }
+        if (!hasMicPermission()) {
+            call.reject("PERMISSION_MICRO_REQUIRED");
+            return;
+        }
         try {
             prefs().edit().putBoolean(WhistleDetectionService.PREF_ENABLED, true).apply();
             Intent service = new Intent(getContext(), WhistleDetectionService.class);
@@ -60,6 +65,21 @@ public class WhistlePlugin extends Plugin {
         } catch (Exception e) {
             call.reject("Impossible de désactiver le sifflement : " + e.getMessage());
         }
+    }
+
+    @PluginMethod
+    public void setThreshold(PluginCall call) {
+        Double value = call.getDouble("thresholdDb");
+        if (value == null) {
+            call.reject("thresholdDb manquant");
+            return;
+        }
+
+        double safe = Math.max(-70.0, Math.min(-15.0, value));
+        prefs().edit()
+                .putFloat(WhistleDetectionService.PREF_THRESHOLD_DB, (float) safe)
+                .apply();
+        call.resolve(status());
     }
 
     @PluginMethod
