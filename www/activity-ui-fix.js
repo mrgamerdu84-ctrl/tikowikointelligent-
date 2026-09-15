@@ -69,6 +69,54 @@
     document.head.appendChild(style);
   }
 
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', installFixes);
-  else installFixes();
+  function installAntiCheatSpeechPolicy() {
+    const original = window.updateRobotMotionState;
+    if (typeof original !== 'function' || original.__tikowikoAntiCheatPolicy) return;
+
+    let lastStrongAlertAt = 0;
+
+    const patched = function (state, reason, steps) {
+      if (state !== 'blocked') {
+        return original(state, reason, steps);
+      }
+
+      const ring = document.querySelector('.step-ring');
+      const label = document.getElementById('robotMotionLabel');
+      if (ring) {
+        ring.classList.remove('motion-idle','motion-checking','motion-walking','motion-near','motion-blocked');
+        ring.classList.add('motion-blocked');
+      }
+
+      const why = String(reason || '').toLowerCase();
+      const strongCheatSignal = /secousses répétées|secousse du téléphone détectée|compteur de pas impossible|position gps simulée|localisation simulée/.test(why);
+
+      if (label) {
+        label.textContent = strongCheatSignal ? 'Triche probable détectée' : 'Mouvement non validé';
+      }
+
+      // Une marche rapide, une course ou un capteur incertain peut être refusé sans accuser la personne.
+      // Tikowiko ne dit « tu triches » que lorsqu'un signal physique nettement anormal est détecté.
+      if (strongCheatSignal) {
+        const now = Date.now();
+        if (now - lastStrongAlertAt > 10000) {
+          lastStrongAlertAt = now;
+          const msg = 'Tikowiko : une manipulation anormale du téléphone a été détectée. Ces mouvements ne comptent pas pour les récompenses.';
+          if (typeof window.addBubble === 'function') window.addBubble(msg, 'system');
+          if (typeof window.speakTikowiko === 'function') window.speakTikowiko(msg);
+        }
+      }
+    };
+
+    patched.__tikowikoAntiCheatPolicy = true;
+    window.updateRobotMotionState = patched;
+  }
+
+  function boot() {
+    installFixes();
+    installAntiCheatSpeechPolicy();
+    setTimeout(installAntiCheatSpeechPolicy, 600);
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
+  else boot();
 })();
