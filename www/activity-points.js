@@ -10,6 +10,9 @@ const TIKO_REWARDS = [
   { steps: 10000, points: 100, reward: 'Style de boutons Énergie' }
 ];
 
+let tikoLastMotionState = 'idle';
+let tikoLastCheatSpeechAt = 0;
+
 function getTikowikoVoiceProfile() {
   const saved = localStorage.getItem(TIKO_VOICE_KEY);
   return ['robot','femme','homme'].includes(saved) ? saved : 'robot';
@@ -65,6 +68,92 @@ function installVoiceSelector() {
     setTikowikoVoiceProfile(select.value);
     speakTikowiko('Bonjour, je suis Tikowiko. Cette voix est maintenant sélectionnée.');
   });
+}
+
+function installDeveloperCard() {
+  const content = document.querySelector('#settingsPanel .content');
+  if (!content || document.getElementById('tikowikoDeveloperCard')) return;
+  const card = document.createElement('div');
+  card.id = 'tikowikoDeveloperCard';
+  card.className = 'settings-card';
+  card.innerHTML = '<div style="font-weight:800;margin-bottom:6px">© TikowikoFamily</div><div class="setting-help">Confidentiel</div><div class="setting-help" style="margin-top:6px">Contact développeur : <a href="mailto:mrgamerdu84@gmail.com" style="color:#1fe5ff">mrgamerdu84@gmail.com</a></div>';
+  content.appendChild(card);
+}
+
+function ensureRobotMotionUi() {
+  if (document.getElementById('tikoMotionStyle')) return;
+  const style = document.createElement('style');
+  style.id = 'tikoMotionStyle';
+  style.textContent = `
+    .step-ring{position:relative}
+    #robotMotionFx{position:absolute;inset:0;z-index:5;pointer-events:none}
+    #robotMotionFx .eye{position:absolute;top:78px;width:10px;height:7px;border-radius:50%;opacity:.3;background:#1fe5ff;box-shadow:0 0 8px currentColor;transition:.2s}
+    #robotMotionFx .eye.left{left:86px} #robotMotionFx .eye.right{right:86px}
+    #robotMotionHeart{position:absolute;left:50%;top:117px;transform:translateX(18px);font-size:24px;opacity:.45;filter:drop-shadow(0 0 5px currentColor)}
+    #robotMotionLabel{position:absolute;left:50%;bottom:4px;transform:translateX(-50%);white-space:nowrap;padding:4px 9px;border-radius:12px;font-size:10px;font-weight:800;background:rgba(0,10,28,.82);border:1px solid currentColor;color:#67dfff}
+    .step-ring.motion-walking #robotMotionHeart,.step-ring.motion-walking #robotMotionFx .eye{color:#ff9d2f;background:#ff9d2f;opacity:1;animation:tikoWalkPulse .9s ease-in-out infinite alternate}
+    .step-ring.motion-walking #robotMotionLabel{color:#ffae48}
+    .step-ring.motion-near #robotMotionHeart,.step-ring.motion-near #robotMotionFx .eye{color:#42ff8c;background:#42ff8c;opacity:1;animation:tikoNearPulse .42s ease-in-out infinite alternate}
+    .step-ring.motion-near #robotMotionLabel{color:#42ff8c}
+    .step-ring.motion-blocked #robotMotionHeart,.step-ring.motion-blocked #robotMotionFx .eye{color:#ff3d4f;background:#ff3d4f;opacity:1;animation:tikoBlockedBlink .28s linear infinite alternate}
+    .step-ring.motion-blocked #robotMotionLabel{color:#ff5b68}
+    .step-ring.motion-checking #robotMotionHeart,.step-ring.motion-checking #robotMotionFx .eye{color:#ffd05a;background:#ffd05a;opacity:.72;animation:tikoWalkPulse 1.25s ease-in-out infinite alternate}
+    .step-ring.motion-checking #robotMotionLabel{color:#ffd05a}
+    @keyframes tikoWalkPulse{from{transform:scale(.92);filter:drop-shadow(0 0 2px currentColor)}to{transform:scale(1.12);filter:drop-shadow(0 0 11px currentColor)}}
+    @keyframes tikoNearPulse{from{transform:scale(.9)}to{transform:scale(1.2)}}
+    @keyframes tikoBlockedBlink{from{opacity:.2}to{opacity:1}}
+  `;
+  document.head.appendChild(style);
+
+  const ring = document.querySelector('.step-ring');
+  if (ring && !document.getElementById('robotMotionFx')) {
+    const fx = document.createElement('div');
+    fx.id = 'robotMotionFx';
+    fx.innerHTML = '<span class="eye left"></span><span class="eye right"></span><span id="robotMotionHeart">♥</span><span id="robotMotionLabel">Prêt</span>';
+    ring.appendChild(fx);
+  }
+}
+
+function nextMilestoneFor(steps) {
+  return [2000, 5000, 10000].find(target => steps < target) || null;
+}
+
+function updateRobotMotionState(state, reason, steps) {
+  ensureRobotMotionUi();
+  const ring = document.querySelector('.step-ring');
+  const label = document.getElementById('robotMotionLabel');
+  if (!ring || !label) return;
+
+  ring.classList.remove('motion-idle','motion-checking','motion-walking','motion-near','motion-blocked');
+  const safeSteps = Math.max(0, Number(steps) || 0);
+  const next = nextMilestoneFor(safeSteps);
+  const near = state === 'walking' && next && (next - safeSteps) <= 200;
+
+  if (state === 'blocked') {
+    ring.classList.add('motion-blocked');
+    label.textContent = 'Mouvement non valide';
+    const now = Date.now();
+    if (tikoLastMotionState !== 'blocked' && now - tikoLastCheatSpeechAt > 10000) {
+      tikoLastCheatSpeechAt = now;
+      const msg = 'Tikowiko : tu triches. Ces mouvements ne comptent pas et tu ne seras pas récompensé.';
+      addBubble?.(msg, 'system');
+      speakTikowiko(msg);
+    }
+  } else if (near) {
+    ring.classList.add('motion-near');
+    label.textContent = `Presque au palier ${next.toLocaleString('fr-FR')}`;
+  } else if (state === 'walking') {
+    ring.classList.add('motion-walking');
+    label.textContent = 'Marche détectée';
+  } else if (state === 'checking') {
+    ring.classList.add('motion-checking');
+    label.textContent = 'Vérification de la marche';
+  } else {
+    ring.classList.add('motion-idle');
+    label.textContent = 'Prêt';
+  }
+
+  tikoLastMotionState = state || 'idle';
 }
 
 function ensureMilestoneProgressStyle() {
@@ -128,23 +217,31 @@ function saveActivityState(state) {
 
 async function getActivitySnapshot() {
   let steps = 0;
+  let rejectedSteps = 0;
   let sensorAvailable = false;
   let permissionRequired = false;
   let permissionGranted = true;
   let listenersRegistered = false;
   let stepCounterAvailable = false;
   let stepDetectorAvailable = false;
+  let strictWalkingFilter = false;
+  let motionState = 'idle';
+  let blockedReason = '';
 
   if (ActivityPoints?.getToday) {
     try {
       const r = await ActivityPoints.getToday();
       steps = Number(r?.steps || 0);
+      rejectedSteps = Number(r?.rejectedSteps || 0);
       sensorAvailable = !!r?.sensorAvailable;
       permissionRequired = !!r?.activityPermissionRequired;
       permissionGranted = !!r?.activityPermissionGranted;
       listenersRegistered = !!r?.listenersRegistered;
       stepCounterAvailable = !!r?.stepCounterAvailable;
       stepDetectorAvailable = !!r?.stepDetectorAvailable;
+      strictWalkingFilter = !!r?.strictWalkingFilter;
+      motionState = String(r?.motionState || 'idle');
+      blockedReason = String(r?.blockedReason || '');
     } catch (e) {
       console.warn('Tikowiko ActivityPoints indisponible', e);
     }
@@ -152,15 +249,20 @@ async function getActivitySnapshot() {
 
   updateMilestoneProgress(steps);
   updateProgressMessage(steps);
+  updateRobotMotionState(motionState, blockedReason, steps);
 
   return {
     steps,
+    rejectedSteps,
     sensorAvailable,
     permissionRequired,
     permissionGranted,
     listenersRegistered,
     stepCounterAvailable,
-    stepDetectorAvailable
+    stepDetectorAvailable,
+    strictWalkingFilter,
+    motionState,
+    blockedReason
   };
 }
 
@@ -189,7 +291,6 @@ async function ensureActivityAccess() {
 }
 
 async function refreshActivityPanel() {
-  const panel = document.getElementById('activityPanel');
   const snap = await getActivitySnapshot();
   const state = loadActivityState();
   const max = 10000;
@@ -215,8 +316,12 @@ async function refreshActivityPanel() {
       permissionBox.innerHTML = '<button class="action" onclick="requestActivityAccess()">Autoriser l’activité physique</button><div style="margin-top:8px">Tikowiko a besoin de cette autorisation pour compter tes pas.</div>';
     } else if (!snap.listenersRegistered) {
       permissionBox.textContent = 'Le capteur est présent, mais il n’est pas encore actif. Rouvre cette page dans quelques secondes.';
+    } else if (snap.motionState === 'blocked') {
+      permissionBox.textContent = `⛔ Mouvement refusé : ${snap.blockedReason || 'activité non compatible avec la marche'}. Ces mouvements ne comptent pas.`;
+    } else if (snap.strictWalkingFilter) {
+      permissionBox.textContent = `Filtre marche stricte actif. ${snap.rejectedSteps.toLocaleString('fr-FR')} mouvement(s) non validé(s) aujourd’hui.`;
     } else {
-      permissionBox.textContent = 'Compteur de pas actif. Les nouveaux pas sont comptés localement par Android.';
+      permissionBox.textContent = 'Compteur de pas actif. Le téléphone ne fournit pas le détecteur individuel nécessaire au filtre marche stricte.';
     }
   }
 
@@ -255,6 +360,12 @@ async function requestActivityAccess() {
 
 async function claimActivityReward(stepTarget) {
   const snap = await getActivitySnapshot();
+  if (snap.motionState === 'blocked') {
+    const msg = 'Tikowiko : les mouvements non validés ne donnent aucune récompense.';
+    addBubble?.(msg, 'system');
+    speakTikowiko(msg);
+    return;
+  }
   const reward = TIKO_REWARDS.find(r => r.steps === Number(stepTarget));
   if (!reward || snap.steps < reward.steps) return;
   const state = loadActivityState();
@@ -291,7 +402,7 @@ async function handleActivityVoiceCommand(text) {
   const state = loadActivityState();
   const next = TIKO_REWARDS.find(r => snap.steps < r.steps) || null;
   let answer = '';
-  if (asksSteps) answer = `${snap.steps.toLocaleString('fr-FR')} pas aujourd’hui.`;
+  if (asksSteps) answer = `${snap.steps.toLocaleString('fr-FR')} pas validés aujourd’hui.`;
   else if (asksNext) answer = next ? `Il te reste ${Math.max(0, next.steps - snap.steps).toLocaleString('fr-FR')} pas avant la prochaine récompense.` : 'Tu as atteint tous les paliers du jour.';
   else if (asksReward) answer = next ? `Ta prochaine récompense est ${next.reward}, à ${next.steps.toLocaleString('fr-FR')} pas.` : 'Toutes les récompenses du jour sont atteintes.';
   else if (asksPoints) answer = `Tu as ${state.points.toLocaleString('fr-FR')} points Tikowiko.`;
@@ -312,13 +423,17 @@ window.loadActivityState = loadActivityState;
 window.ensureActivityAccess = ensureActivityAccess;
 window.updateMilestoneProgress = updateMilestoneProgress;
 window.updateProgressMessage = updateProgressMessage;
+window.updateRobotMotionState = updateRobotMotionState;
 window.speakTikowiko = speakTikowiko;
 window.getTikowikoVoiceProfile = getTikowikoVoiceProfile;
 window.setTikowikoVoiceProfile = setTikowikoVoiceProfile;
 
 window.addEventListener('DOMContentLoaded', () => {
   installVoiceSelector();
+  installDeveloperCard();
+  ensureRobotMotionUi();
   updateMilestoneProgress(0);
   updateProgressMessage(0);
+  updateRobotMotionState('idle', '', 0);
   setTimeout(ensureActivityAccess, 700);
 });
