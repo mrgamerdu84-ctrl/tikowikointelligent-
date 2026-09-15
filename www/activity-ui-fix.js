@@ -48,14 +48,9 @@
       .step-ring.motion-blocked #robotMotionFx .eye{background:#ff3d4f!important;color:#ff3d4f!important;opacity:1!important;animation:tikoEyeBlocked .28s linear infinite alternate!important}
       .step-ring.motion-blocked #robotMotionLabel{color:#ff5b68!important}
 
-      /* Le robot du profil prend vraiment la couleur choisie au lieu d'un hue-rotate approximatif. */
-      .profile-avatar-wrap{position:relative!important;overflow:hidden!important}
-      .profile-avatar{filter:grayscale(.38) contrast(1.06) brightness(.96) drop-shadow(0 0 8px var(--profile-accent,#38e8ff))!important}
-      .profile-avatar-wrap::after{
-        content:"";position:absolute;width:88px;height:88px;border-radius:22px;
-        background:var(--profile-accent,#38e8ff);mix-blend-mode:color;opacity:.94;
-        pointer-events:none;z-index:3
-      }
+      /* Le robot du profil reste exactement tel qu'il est : aucun recoloriage ni filtre. */
+      .profile-avatar{filter:none!important}
+      .profile-avatar-wrap::after{display:none!important;content:none!important}
       .profile-color{position:relative!important;overflow:hidden!important;color:white!important;font-size:9px!important;font-weight:900!important;text-shadow:0 1px 3px rgba(0,0,0,.9)!important}
       .profile-color::after{content:attr(title);position:absolute;left:3px;right:3px;bottom:3px;text-align:center}
 
