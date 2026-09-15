@@ -40,6 +40,7 @@ jobs:
           cp android-plugin/AppLauncherPlugin.java android/app/src/main/java/com/tikowiko/intelligent/AppLauncherPlugin.java
           cp android-plugin/DirectCallPlugin.java android/app/src/main/java/com/tikowiko/intelligent/DirectCallPlugin.java
           cp android-plugin/ActivityPointsPlugin.java android/app/src/main/java/com/tikowiko/intelligent/ActivityPointsPlugin.java
+          cp android-plugin/ClapDetectionService.java android/app/src/main/java/com/tikowiko/intelligent/ClapDetectionService.java
           cp android-plugin/WhistleDetectionService.java android/app/src/main/java/com/tikowiko/intelligent/WhistleDetectionService.java
           cp android-plugin/WhistlePlugin.java android/app/src/main/java/com/tikowiko/intelligent/WhistlePlugin.java
           cp android-plugin/TikowikoVoiceInteractionService.java android/app/src/main/java/com/tikowiko/intelligent/TikowikoVoiceInteractionService.java
