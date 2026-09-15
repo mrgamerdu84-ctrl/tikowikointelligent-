@@ -28,13 +28,14 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
     private static final String PREFS = "tikowiko_activity";
     private static final int REQ_ACTIVITY = 8842;
 
-    // Fenêtre de cadence volontairement orientée marche.
-    // Plus rapide = course / secousses ; plus lent et isolé = mouvement non confirmé.
-    private static final long MIN_WALK_INTERVAL_MS = 420L;
-    private static final long MAX_WALK_INTERVAL_MS = 1700L;
-    private static final long WALK_IDLE_MS = 3200L;
-    private static final long BLOCK_DURATION_MS = 6000L;
-    private static final int REQUIRED_STABLE_STEPS = 3;
+    // Tolérance pensée pour la marche réelle, y compris dans une maison et avec demi-tours fréquents.
+    // Un seul pas rapide ne déclenche plus le mode triche : il faut plusieurs mouvements très rapides d'affilée.
+    private static final long MIN_WALK_INTERVAL_MS = 280L;
+    private static final long MAX_WALK_INTERVAL_MS = 2200L;
+    private static final long WALK_IDLE_MS = 3800L;
+    private static final long BLOCK_DURATION_MS = 3500L;
+    private static final int REQUIRED_STABLE_STEPS = 2;
+    private static final int FAST_HITS_TO_BLOCK = 3;
 
     private SensorManager sensorManager;
     private Sensor stepCounter;
@@ -52,6 +53,7 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
     private long blockedUntilMs = 0L;
     private int stableWalkSteps = 0;
     private int pendingWalkSteps = 0;
+    private int fastMotionStrikes = 0;
     private String motionState = "idle"; // idle | checking | walking | blocked
     private String blockedReason = "";
 
@@ -99,8 +101,6 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
         if (stepCounter != null) {
             registered = sensorManager.registerListener(this, stepCounter, SensorManager.SENSOR_DELAY_NORMAL) || registered;
         }
-        // On écoute aussi STEP_DETECTOR lorsqu'il existe : il permet de valider la cadence
-        // pas par pas et de ne pas récompenser la course ou les secousses rapides.
         if (stepDetector != null) {
             registered = sensorManager.registerListener(this, stepDetector, SensorManager.SENSOR_DELAY_NORMAL) || registered;
         }
@@ -118,6 +118,7 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
         blockedUntilMs = 0L;
         stableWalkSteps = 0;
         pendingWalkSteps = 0;
+        fastMotionStrikes = 0;
         motionState = "idle";
         blockedReason = "";
     }
@@ -172,6 +173,7 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
         blockedReason = reason;
         stableWalkSteps = 0;
         pendingWalkSteps = 0;
+        fastMotionStrikes = 0;
         save();
     }
 
@@ -183,6 +185,7 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
                 blockedReason = "";
                 stableWalkSteps = 0;
                 pendingWalkSteps = 0;
+                fastMotionStrikes = 0;
                 lastDetectorMs = 0L;
             }
             return;
@@ -192,6 +195,7 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
             motionState = "idle";
             stableWalkSteps = 0;
             pendingWalkSteps = 0;
+            fastMotionStrikes = 0;
             lastDetectorMs = 0L;
         }
     }
@@ -211,6 +215,7 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
             lastDetectorMs = now;
             stableWalkSteps = 1;
             pendingWalkSteps = 1;
+            fastMotionStrikes = 0;
             motionState = "checking";
             blockedReason = "";
             return;
@@ -220,14 +225,22 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
         lastDetectorMs = now;
 
         if (interval < MIN_WALK_INTERVAL_MS) {
-            // Cadence trop rapide pour le mode marche strict : course, secousses,
-            // téléphone agité ou autre mouvement rapide.
-            enterBlocked("mouvement trop rapide ou course détectée", pendingWalkSteps + 1);
+            // On ne condamne plus un mouvement rapide isolé : un demi-tour ou un pas court en intérieur
+            // peut produire un intervalle bref. Trois intervalles très rapides consécutifs sont nécessaires.
+            fastMotionStrikes++;
+            stableWalkSteps = 0;
+            pendingWalkSteps = 0;
+            motionState = "checking";
+            blockedReason = "";
+            if (fastMotionStrikes >= FAST_HITS_TO_BLOCK) {
+                enterBlocked("mouvements trop rapides répétés", fastMotionStrikes);
+            }
             return;
         }
 
+        fastMotionStrikes = 0;
+
         if (interval > MAX_WALK_INTERVAL_MS) {
-            // Pas isolés/irréguliers : on attend une vraie séquence de marche avant de compter.
             stableWalkSteps = 1;
             pendingWalkSteps = 1;
             motionState = "checking";
@@ -250,9 +263,7 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
 
     /**
      * Fallback pour les téléphones sans STEP_DETECTOR.
-     * Quand STEP_DETECTOR existe, STEP_COUNTER sert uniquement de référence système :
-     * on ne l'utilise pas pour ajouter des pas afin d'éviter les doubles comptes et
-     * les gros deltas impossibles à valider (véhicule, secousses, fermeture de l'app).
+     * Quand STEP_DETECTOR existe, STEP_COUNTER sert uniquement de référence système.
      */
     private void syncFromSystemCounter(float total) {
         rolloverIfNeeded();
@@ -282,7 +293,6 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
         lastCounter = total;
         lastCounterSampleMs = now;
 
-        // Mode strict : le détecteur individuel décide quels pas sont valides.
         if (stepDetector != null) {
             counterBase = total - todaySteps;
             save();
@@ -292,15 +302,15 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
         if (delta <= 0f || delta >= 100000f) return;
 
         double rate = elapsed > 0L ? (delta * 1000.0) / elapsed : 0.0;
-        if (elapsed > 0L && elapsed < 5000L && rate > 2.45) {
-            enterBlocked("cadence trop rapide détectée", Math.max(1, Math.round(delta)));
+        // Le fallback reste prudent, mais ne marque plus une marche vive comme triche au premier échantillon.
+        if (elapsed > 0L && elapsed < 5000L && rate > 3.4) {
+            enterBlocked("cadence anormalement rapide détectée", Math.max(1, Math.round(delta)));
             return;
         }
 
-        // Sans STEP_DETECTOR on conserve un fallback compatible, mais moins strict.
         todaySteps += Math.round(delta);
         counterBase = total - todaySteps;
-        motionState = rate >= 0.55 && rate <= 2.45 ? "walking" : "checking";
+        motionState = rate >= 0.35 && rate <= 3.4 ? "walking" : "checking";
         blockedReason = "";
         save();
     }
@@ -360,10 +370,9 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
         }
 
         if (event.sensor.getType() == Sensor.TYPE_STEP_DETECTOR) {
-            int detected = Math.max(1, Math.round(event.values[0]));
-            for (int i = 0; i < detected; i++) {
-                handleDetectedStep();
-            }
+            // TYPE_STEP_DETECTOR signale normalement un pas par évènement. On traite l'évènement une seule fois
+            // pour éviter qu'un éventuel lot de capteur soit interprété comme plusieurs pas simultanés et donc comme de la triche.
+            handleDetectedStep();
         }
     }
 
