@@ -40,7 +40,8 @@ jobs:
           cp android-plugin/AppLauncherPlugin.java android/app/src/main/java/com/tikowiko/intelligent/AppLauncherPlugin.java
           cp android-plugin/DirectCallPlugin.java android/app/src/main/java/com/tikowiko/intelligent/DirectCallPlugin.java
           cp android-plugin/ActivityPointsPlugin.java android/app/src/main/java/com/tikowiko/intelligent/ActivityPointsPlugin.java
-          cp android-plugin/ClapDetectionService.java android/app/src/main/java/com/tikowiko/intelligent/ClapDetectionService.java
+          cp android-plugin/WhistleDetectionService.java android/app/src/main/java/com/tikowiko/intelligent/WhistleDetectionService.java
+          cp android-plugin/WhistlePlugin.java android/app/src/main/java/com/tikowiko/intelligent/WhistlePlugin.java
           cp android-plugin/TikowikoVoiceInteractionService.java android/app/src/main/java/com/tikowiko/intelligent/TikowikoVoiceInteractionService.java
           cp android-plugin/TikowikoVoiceInteractionSessionService.java android/app/src/main/java/com/tikowiko/intelligent/TikowikoVoiceInteractionSessionService.java
           cp android-plugin/TikowikoVoiceInteractionSession.java android/app/src/main/java/com/tikowiko/intelligent/TikowikoVoiceInteractionSession.java
@@ -69,13 +70,13 @@ jobs:
           for permission in permissions:
               if permission not in text:
                   text = text.replace('<application', permission + '\n\n    <application', 1)
-          clap_service = '''        <service
-              android:name=".ClapDetectionService"
+          whistle_service = '''        <service
+              android:name=".WhistleDetectionService"
               android:exported="false"
               android:stopWithTask="false"
               android:foregroundServiceType="microphone" />\n'''
-          if 'android:name=".ClapDetectionService"' not in text:
-              text = text.replace('    </application>', clap_service + '    </application>', 1)
+          if 'android:name=".WhistleDetectionService"' not in text:
+              text = text.replace('    </application>', whistle_service + '    </application>', 1)
           assistant_services = '''        <service
               android:name=".TikowikoVoiceInteractionService"
               android:permission="android.permission.BIND_VOICE_INTERACTION"
