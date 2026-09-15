@@ -18,6 +18,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(AppLauncherPlugin.class);
         registerPlugin(DirectCallPlugin.class);
         registerPlugin(ActivityPointsPlugin.class);
+        registerPlugin(WhistlePlugin.class);
         registerPlugin(TikowikoTtsPlugin.class);
         super.onCreate(savedInstanceState);
     }
