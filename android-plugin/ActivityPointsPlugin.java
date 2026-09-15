@@ -9,6 +9,7 @@ import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
 import android.os.Build;
+import android.os.SystemClock;
 
 import androidx.core.app.ActivityCompat;
 
@@ -27,15 +28,32 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
     private static final String PREFS = "tikowiko_activity";
     private static final int REQ_ACTIVITY = 8842;
 
+    // Fenêtre de cadence volontairement orientée marche.
+    // Plus rapide = course / secousses ; plus lent et isolé = mouvement non confirmé.
+    private static final long MIN_WALK_INTERVAL_MS = 420L;
+    private static final long MAX_WALK_INTERVAL_MS = 1700L;
+    private static final long WALK_IDLE_MS = 3200L;
+    private static final long BLOCK_DURATION_MS = 6000L;
+    private static final int REQUIRED_STABLE_STEPS = 3;
+
     private SensorManager sensorManager;
     private Sensor stepCounter;
     private Sensor stepDetector;
 
     private int todaySteps = 0;
+    private int rejectedSteps = 0;
     private String dayKey = "";
     private float counterBase = -1f;
     private float lastCounter = -1f;
     private boolean listenersRegistered = false;
+
+    private long lastDetectorMs = 0L;
+    private long lastCounterSampleMs = 0L;
+    private long blockedUntilMs = 0L;
+    private int stableWalkSteps = 0;
+    private int pendingWalkSteps = 0;
+    private String motionState = "idle"; // idle | checking | walking | blocked
+    private String blockedReason = "";
 
     @Override
     public void load() {
@@ -81,7 +99,9 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
         if (stepCounter != null) {
             registered = sensorManager.registerListener(this, stepCounter, SensorManager.SENSOR_DELAY_NORMAL) || registered;
         }
-        if (stepDetector != null && stepCounter == null) {
+        // On écoute aussi STEP_DETECTOR lorsqu'il existe : il permet de valider la cadence
+        // pas par pas et de ne pas récompenser la course ou les secousses rapides.
+        if (stepDetector != null) {
             registered = sensorManager.registerListener(this, stepDetector, SensorManager.SENSOR_DELAY_NORMAL) || registered;
         }
         listenersRegistered = registered;
@@ -92,13 +112,25 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
         listenersRegistered = false;
     }
 
+    private void resetMotionState() {
+        lastDetectorMs = 0L;
+        lastCounterSampleMs = 0L;
+        blockedUntilMs = 0L;
+        stableWalkSteps = 0;
+        pendingWalkSteps = 0;
+        motionState = "idle";
+        blockedReason = "";
+    }
+
     private void rolloverIfNeeded() {
         String now = currentDay();
         if (!now.equals(dayKey)) {
             dayKey = now;
             todaySteps = 0;
+            rejectedSteps = 0;
             counterBase = -1f;
             lastCounter = -1f;
+            resetMotionState();
             save();
         }
     }
@@ -109,34 +141,122 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
         if (!currentDay().equals(dayKey)) {
             dayKey = currentDay();
             todaySteps = 0;
+            rejectedSteps = 0;
             counterBase = -1f;
             lastCounter = -1f;
+            resetMotionState();
             save();
             return;
         }
         todaySteps = p.getInt("steps", 0);
+        rejectedSteps = p.getInt("rejectedSteps", 0);
         counterBase = p.getFloat("counterBase", -1f);
         lastCounter = p.getFloat("lastCounter", -1f);
+        resetMotionState();
     }
 
     private void save() {
         prefs().edit()
                 .putString("day", dayKey)
                 .putInt("steps", todaySteps)
+                .putInt("rejectedSteps", rejectedSteps)
                 .putFloat("counterBase", counterBase)
                 .putFloat("lastCounter", lastCounter)
                 .apply();
     }
 
+    private void enterBlocked(String reason, int rejectedNow) {
+        rejectedSteps += Math.max(1, rejectedNow);
+        blockedUntilMs = SystemClock.elapsedRealtime() + BLOCK_DURATION_MS;
+        motionState = "blocked";
+        blockedReason = reason;
+        stableWalkSteps = 0;
+        pendingWalkSteps = 0;
+        save();
+    }
+
+    private void refreshMotionState() {
+        long now = SystemClock.elapsedRealtime();
+        if ("blocked".equals(motionState)) {
+            if (now >= blockedUntilMs) {
+                motionState = "idle";
+                blockedReason = "";
+                stableWalkSteps = 0;
+                pendingWalkSteps = 0;
+                lastDetectorMs = 0L;
+            }
+            return;
+        }
+        if (("walking".equals(motionState) || "checking".equals(motionState)) &&
+                lastDetectorMs > 0L && now - lastDetectorMs > WALK_IDLE_MS) {
+            motionState = "idle";
+            stableWalkSteps = 0;
+            pendingWalkSteps = 0;
+            lastDetectorMs = 0L;
+        }
+    }
+
+    private void handleDetectedStep() {
+        rolloverIfNeeded();
+        long now = SystemClock.elapsedRealtime();
+
+        if (now < blockedUntilMs) {
+            rejectedSteps++;
+            lastDetectorMs = now;
+            save();
+            return;
+        }
+
+        if (lastDetectorMs <= 0L || now - lastDetectorMs > WALK_IDLE_MS) {
+            lastDetectorMs = now;
+            stableWalkSteps = 1;
+            pendingWalkSteps = 1;
+            motionState = "checking";
+            blockedReason = "";
+            return;
+        }
+
+        long interval = now - lastDetectorMs;
+        lastDetectorMs = now;
+
+        if (interval < MIN_WALK_INTERVAL_MS) {
+            // Cadence trop rapide pour le mode marche strict : course, secousses,
+            // téléphone agité ou autre mouvement rapide.
+            enterBlocked("mouvement trop rapide ou course détectée", pendingWalkSteps + 1);
+            return;
+        }
+
+        if (interval > MAX_WALK_INTERVAL_MS) {
+            // Pas isolés/irréguliers : on attend une vraie séquence de marche avant de compter.
+            stableWalkSteps = 1;
+            pendingWalkSteps = 1;
+            motionState = "checking";
+            blockedReason = "";
+            return;
+        }
+
+        stableWalkSteps++;
+        pendingWalkSteps++;
+        motionState = "checking";
+
+        if (stableWalkSteps >= REQUIRED_STABLE_STEPS) {
+            todaySteps += pendingWalkSteps;
+            pendingWalkSteps = 0;
+            motionState = "walking";
+            blockedReason = "";
+            save();
+        }
+    }
+
     /**
-     * Synchronise le compteur logiciel avec TYPE_STEP_COUNTER.
-     * TYPE_STEP_COUNTER est cumulatif depuis le dernier redémarrage Android :
-     * il continue donc à augmenter même si Tikowiko est fermé. Lors de la
-     * prochaine lecture, on ajoute simplement le delta qui s'est produit
-     * pendant la fermeture de l'application.
+     * Fallback pour les téléphones sans STEP_DETECTOR.
+     * Quand STEP_DETECTOR existe, STEP_COUNTER sert uniquement de référence système :
+     * on ne l'utilise pas pour ajouter des pas afin d'éviter les doubles comptes et
+     * les gros deltas impossibles à valider (véhicule, secousses, fermeture de l'app).
      */
     private void syncFromSystemCounter(float total) {
         rolloverIfNeeded();
+        long now = SystemClock.elapsedRealtime();
 
         if (lastCounter < 0f) {
             if (counterBase < 0f) {
@@ -144,45 +264,66 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
                 if (counterBase < 0f) counterBase = total;
             }
             lastCounter = total;
-
-            int candidate = Math.max(todaySteps, Math.round(total - counterBase));
-            todaySteps = candidate;
+            lastCounterSampleMs = now;
             save();
             return;
         }
 
         if (total < lastCounter) {
-            // Téléphone redémarré : le compteur Android repart à zéro.
-            counterBase = total - todaySteps;
-            if (counterBase < 0f) counterBase = total;
+            counterBase = total;
             lastCounter = total;
+            lastCounterSampleMs = now;
             save();
             return;
         }
 
         float delta = total - lastCounter;
-        if (delta >= 0f && delta < 100000f) {
-            todaySteps += Math.round(delta);
-            lastCounter = total;
+        long elapsed = lastCounterSampleMs > 0L ? now - lastCounterSampleMs : 0L;
+        lastCounter = total;
+        lastCounterSampleMs = now;
+
+        // Mode strict : le détecteur individuel décide quels pas sont valides.
+        if (stepDetector != null) {
             counterBase = total - todaySteps;
             save();
+            return;
         }
+
+        if (delta <= 0f || delta >= 100000f) return;
+
+        double rate = elapsed > 0L ? (delta * 1000.0) / elapsed : 0.0;
+        if (elapsed > 0L && elapsed < 5000L && rate > 2.45) {
+            enterBlocked("cadence trop rapide détectée", Math.max(1, Math.round(delta)));
+            return;
+        }
+
+        // Sans STEP_DETECTOR on conserve un fallback compatible, mais moins strict.
+        todaySteps += Math.round(delta);
+        counterBase = total - todaySteps;
+        motionState = rate >= 0.55 && rate <= 2.45 ? "walking" : "checking";
+        blockedReason = "";
+        save();
     }
 
     @PluginMethod
     public void getToday(PluginCall call) {
         rolloverIfNeeded();
         registerSensorsIfAllowed();
+        refreshMotionState();
 
         JSObject result = new JSObject();
         result.put("steps", todaySteps);
+        result.put("rejectedSteps", rejectedSteps);
         result.put("sensorAvailable", stepCounter != null || stepDetector != null);
         result.put("stepCounterAvailable", stepCounter != null);
         result.put("stepDetectorAvailable", stepDetector != null);
+        result.put("strictWalkingFilter", stepDetector != null);
         result.put("activityPermissionRequired", Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q);
         result.put("activityPermissionGranted", permissionGranted());
         result.put("listenersRegistered", listenersRegistered);
-        result.put("countsWhileClosed", stepCounter != null);
+        result.put("countsWhileClosed", stepDetector == null && stepCounter != null);
+        result.put("motionState", motionState);
+        result.put("blockedReason", blockedReason);
         result.put("day", dayKey);
         call.resolve(result);
     }
@@ -218,11 +359,11 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
             return;
         }
 
-        if (event.sensor.getType() == Sensor.TYPE_STEP_DETECTOR && stepCounter == null) {
-            rolloverIfNeeded();
+        if (event.sensor.getType() == Sensor.TYPE_STEP_DETECTOR) {
             int detected = Math.max(1, Math.round(event.values[0]));
-            todaySteps += detected;
-            save();
+            for (int i = 0; i < detected; i++) {
+                handleDetectedStep();
+            }
         }
     }
 
