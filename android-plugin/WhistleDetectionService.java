@@ -31,8 +31,9 @@ public class WhistleDetectionService extends Service {
     private static final int SAMPLE_RATE = 16000;
     private static final double MIN_FREQ = 1200.0;
     private static final double MAX_FREQ = 4200.0;
-    private static final int REQUIRED_STABLE_FRAMES = 6;
+    private static final int REQUIRED_STABLE_FRAMES = 10;
     private static final long COOLDOWN_MS = 3500L;
+    private static final long CLOSE_GUARD_MS = 5000L;
 
     private volatile boolean running = false;
     private AudioRecord recorder;
@@ -41,6 +42,7 @@ public class WhistleDetectionService extends Service {
     private double previousFreq = 0.0;
     private int stableFrames = 0;
     private long lastTriggerAt = 0L;
+    private long suppressLaunchUntil = 0L;
 
     @Override
     public void onCreate() {
@@ -76,7 +78,7 @@ public class WhistleDetectionService extends Service {
     }
 
     private void detectLoop() {
-        short[] buffer = new short[800]; // ~50 ms
+        short[] buffer = new short[800];
         while (running && recorder != null) {
             int read = recorder.read(buffer, 0, buffer.length);
             if (read <= 0) continue;
@@ -121,6 +123,12 @@ public class WhistleDetectionService extends Service {
 
     private void onWhistle(double freq) {
         long now = SystemClock.elapsedRealtime();
+        if (now < suppressLaunchUntil) {
+            stableFrames = 0;
+            previousFreq = 0.0;
+            setStage("Fermeture récente — sifflement ignoré quelques secondes");
+            return;
+        }
         if (now - lastTriggerAt < COOLDOWN_MS) return;
         lastTriggerAt = now;
         stableFrames = 0;
@@ -174,8 +182,11 @@ public class WhistleDetectionService extends Service {
 
     @Override
     public void onTaskRemoved(Intent rootIntent) {
+        suppressLaunchUntil = SystemClock.elapsedRealtime() + CLOSE_GUARD_MS;
+        stableFrames = 0;
+        previousFreq = 0.0;
         SharedPreferences p = getSharedPreferences(PREFS, MODE_PRIVATE);
-        if (p.getBoolean(PREF_ENABLED, false)) updateForegroundText("Sifflement toujours actif en arrière-plan");
+        if (p.getBoolean(PREF_ENABLED, false)) updateForegroundText("Sifflement actif en arrière-plan");
         super.onTaskRemoved(rootIntent);
     }
 
