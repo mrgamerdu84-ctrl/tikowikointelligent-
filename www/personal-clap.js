@@ -1,8 +1,16 @@
-// Tikowiko : activation par sifflement + jauge de pas plus réactive.
+// Tikowiko : réveil vocal tolérant + jauge de pas plus réactive.
 (function () {
-  const Whistle = window.Capacitor?.Plugins?.Whistle;
+  const SpeechRecognition = window.Capacitor?.Plugins?.SpeechRecognition;
   let lastSteps = -1;
   let pollBusy = false;
+  let wakeListening = false;
+  let wakeWanted = false;
+  let restartTimer = null;
+
+  const WAKE_VARIANTS = [
+    'tikowiko', 'tiko wiko', 'tico wico', 'tiko rico', 'tico rico',
+    'tiko', 'tico', 'tikowico', 'tico wiko', 'tiko ouiko', 'tico ouico'
+  ];
 
   function bubble(text, type = 'system') {
     if (typeof window.addBubble === 'function') window.addBubble(text, type);
@@ -15,44 +23,117 @@
     return true;
   }
 
-  async function refreshWhistleStatus() {
-    const toggle = document.getElementById('whistleToggle');
-    const status = document.getElementById('whistleStatus');
-    if (!toggle) return;
-    toggle.disabled = !Whistle || typeof Whistle.getStatus !== 'function';
-    if (toggle.disabled) {
-      if (status) status.textContent = 'Disponible dans l’application Android compilée.';
+  function normalize(text) {
+    return String(text || '')
+      .toLowerCase()
+      .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9 ]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function compact(text) {
+    return normalize(text).replace(/\s+/g, '');
+  }
+
+  function editDistance(a, b) {
+    a = compact(a); b = compact(b);
+    const dp = Array.from({ length: b.length + 1 }, (_, i) => i);
+    for (let i = 1; i <= a.length; i++) {
+      let prev = dp[0]; dp[0] = i;
+      for (let j = 1; j <= b.length; j++) {
+        const old = dp[j];
+        dp[j] = Math.min(dp[j] + 1, dp[j - 1] + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1));
+        prev = old;
+      }
+    }
+    return dp[b.length];
+  }
+
+  function soundsLikeTikowiko(text) {
+    const n = normalize(text);
+    const c = compact(text);
+    if (!c) return false;
+    if (WAKE_VARIANTS.some(v => n.includes(normalize(v)) || c.includes(compact(v)))) return true;
+    const targets = ['tikowiko', 'ticowico', 'tikorico'];
+    return targets.some(t => editDistance(c, t) <= 2);
+  }
+
+  async function openTikowikoFromWake() {
+    // Quand l'application est déjà visible, confirme simplement le réveil.
+    if (!document.hidden) {
+      bubble('Oui, je t’écoute.', 'assistant');
+      if (typeof window.speakTikowiko === 'function') window.speakTikowiko('Oui, je t’écoute.');
       return;
     }
+    const AppLauncher = window.Capacitor?.Plugins?.AppLauncher;
     try {
-      const r = await Whistle.getStatus();
-      toggle.checked = !!r?.enabled;
-      if (status) status.textContent = r?.enabled ? (r?.stage || 'Écoute du sifflement active') : 'Désactivé';
+      if (AppLauncher?.openSelf) await AppLauncher.openSelf();
+    } catch (_) {}
+  }
+
+  async function runWakeRecognition() {
+    if (!wakeWanted || wakeListening || !SpeechRecognition) return;
+    wakeListening = true;
+    try {
+      const available = await SpeechRecognition.available();
+      if (available && available.available === false) throw new Error('Reconnaissance vocale Android indisponible');
+      const result = await SpeechRecognition.start({
+        language: 'fr-FR',
+        maxResults: 5,
+        prompt: '',
+        partialResults: true,
+        popup: false
+      });
+      const matches = Array.isArray(result?.matches) ? result.matches : [];
+      if (matches.some(soundsLikeTikowiko)) await openTikowikoFromWake();
     } catch (_) {
-      if (status) status.textContent = 'État du sifflement indisponible.';
+      // On relance silencieusement tant que l'option reste activée.
+    } finally {
+      wakeListening = false;
+      if (wakeWanted) {
+        clearTimeout(restartTimer);
+        restartTimer = setTimeout(runWakeRecognition, 900);
+      }
     }
   }
 
-  window.toggleWhistleActivation = async function toggleWhistleActivation(enabled) {
+  async function refreshWakeStatus() {
     const toggle = document.getElementById('whistleToggle');
-    if (!Whistle) return;
+    const status = document.getElementById('whistleStatus');
+    if (!toggle) return;
+    toggle.disabled = !SpeechRecognition || typeof SpeechRecognition.start !== 'function';
+    const enabled = localStorage.getItem('tikowiko_wake_word_v2') === '1';
+    toggle.checked = enabled;
+    wakeWanted = enabled;
+    if (status) status.textContent = enabled ? 'Mot de réveil “Tikowiko” actif' : 'Désactivé';
+    if (enabled) runWakeRecognition();
+  }
+
+  window.toggleWhistleActivation = async function toggleWakeWord(enabled) {
+    const toggle = document.getElementById('whistleToggle');
     if (toggle) toggle.disabled = true;
     try {
       if (enabled) {
         const granted = await ensureMic();
         if (!granted) throw new Error('Permission micro refusée');
-        await Whistle.start();
-        bubble('Activation par sifflement activée. Siffle environ une demi-seconde pour ouvrir Tikowiko.', 'system');
+        localStorage.setItem('tikowiko_wake_word_v2', '1');
+        wakeWanted = true;
+        runWakeRecognition();
+        bubble('Réveil vocal activé. Tu peux dire “Tikowiko” ; les variantes proches sont aussi reconnues.', 'system');
       } else {
-        await Whistle.stop();
-        bubble('Activation par sifflement désactivée.', 'system');
+        localStorage.setItem('tikowiko_wake_word_v2', '0');
+        wakeWanted = false;
+        clearTimeout(restartTimer);
+        try { await SpeechRecognition?.stop?.(); } catch (_) {}
+        bubble('Réveil vocal désactivé.', 'system');
       }
     } catch (e) {
       if (toggle) toggle.checked = !enabled;
-      bubble('Impossible de modifier le sifflement : ' + (e?.message || e), 'system error');
+      bubble('Impossible de modifier le réveil vocal : ' + (e?.message || e), 'system error');
     } finally {
       if (toggle) toggle.disabled = false;
-      refreshWhistleStatus();
+      refreshWakeStatus();
     }
   };
 
@@ -64,15 +145,16 @@
       if (el) el.closest('.settings-card')?.remove();
     });
 
-    const whistleToggle = document.getElementById('whistleToggle');
-    if (whistleToggle) {
-      whistleToggle.disabled = false;
-      whistleToggle.setAttribute('onchange', 'toggleWhistleActivation(this.checked)');
-      const card = whistleToggle.closest('.settings-card');
+    const toggle = document.getElementById('whistleToggle');
+    if (toggle) {
+      toggle.setAttribute('onchange', 'toggleWhistleActivation(this.checked)');
+      const card = toggle.closest('.settings-card');
+      const title = card?.querySelector('.setting-title, h3, strong');
+      if (title) title.textContent = 'Réveil vocal “Tikowiko”';
       const help = card?.querySelector('.setting-help');
       if (help) { help.id = 'whistleStatus'; help.textContent = 'Désactivé'; }
     }
-    refreshWhistleStatus();
+    refreshWakeStatus();
   }
 
   function installGaugePulseStyle() {
