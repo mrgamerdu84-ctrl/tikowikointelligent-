@@ -1,4 +1,4 @@
-// Tikowiko : réveil vocal tolérant + jauge de pas plus réactive.
+// Tikowiko : réveil vocal tolérant + jauge de pas en direct.
 (function () {
   const SpeechRecognition = window.Capacitor?.Plugins?.SpeechRecognition;
   let lastSteps = -1;
@@ -17,25 +17,14 @@
   }
 
   async function ensureMic() {
-    if (typeof window.ensureMicrophonePermission === 'function') {
-      return await window.ensureMicrophonePermission();
-    }
+    if (typeof window.ensureMicrophonePermission === 'function') return await window.ensureMicrophonePermission();
     return true;
   }
 
   function normalize(text) {
-    return String(text || '')
-      .toLowerCase()
-      .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-      .replace(/[^a-z0-9 ]+/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
+    return String(text || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
   }
-
-  function compact(text) {
-    return normalize(text).replace(/\s+/g, '');
-  }
-
+  function compact(text) { return normalize(text).replace(/\s+/g, ''); }
   function editDistance(a, b) {
     a = compact(a); b = compact(b);
     const dp = Array.from({ length: b.length + 1 }, (_, i) => i);
@@ -49,27 +38,21 @@
     }
     return dp[b.length];
   }
-
   function soundsLikeTikowiko(text) {
-    const n = normalize(text);
-    const c = compact(text);
+    const n = normalize(text), c = compact(text);
     if (!c) return false;
     if (WAKE_VARIANTS.some(v => n.includes(normalize(v)) || c.includes(compact(v)))) return true;
-    const targets = ['tikowiko', 'ticowico', 'tikorico'];
-    return targets.some(t => editDistance(c, t) <= 2);
+    return ['tikowiko','ticowico','tikorico'].some(t => editDistance(c, t) <= 2);
   }
 
   async function openTikowikoFromWake() {
-    // Quand l'application est déjà visible, confirme simplement le réveil.
     if (!document.hidden) {
       bubble('Oui, je t’écoute.', 'assistant');
       if (typeof window.speakTikowiko === 'function') window.speakTikowiko('Oui, je t’écoute.');
       return;
     }
     const AppLauncher = window.Capacitor?.Plugins?.AppLauncher;
-    try {
-      if (AppLauncher?.openSelf) await AppLauncher.openSelf();
-    } catch (_) {}
+    try { if (AppLauncher?.openSelf) await AppLauncher.openSelf(); } catch (_) {}
   }
 
   async function runWakeRecognition() {
@@ -78,17 +61,10 @@
     try {
       const available = await SpeechRecognition.available();
       if (available && available.available === false) throw new Error('Reconnaissance vocale Android indisponible');
-      const result = await SpeechRecognition.start({
-        language: 'fr-FR',
-        maxResults: 5,
-        prompt: '',
-        partialResults: true,
-        popup: false
-      });
+      const result = await SpeechRecognition.start({language:'fr-FR',maxResults:5,prompt:'',partialResults:true,popup:false});
       const matches = Array.isArray(result?.matches) ? result.matches : [];
       if (matches.some(soundsLikeTikowiko)) await openTikowikoFromWake();
     } catch (_) {
-      // On relance silencieusement tant que l'option reste activée.
     } finally {
       wakeListening = false;
       if (wakeWanted) {
@@ -144,7 +120,6 @@
       const el = document.getElementById(id);
       if (el) el.closest('.settings-card')?.remove();
     });
-
     const toggle = document.getElementById('whistleToggle');
     if (toggle) {
       toggle.setAttribute('onchange', 'toggleWhistleActivation(this.checked)');
@@ -162,19 +137,40 @@
     const style = document.createElement('style');
     style.id = 'tikowikoGaugePulseStyle';
     style.textContent = `
-      .step-ring.tiko-live-step{animation:tikoLiveStep .34s ease-out}
-      .step-ring.tiko-walking-glow{filter:drop-shadow(0 0 8px rgba(255,157,47,.85))}
-      @keyframes tikoLiveStep{0%{filter:drop-shadow(0 0 0 #31e8ff);transform:scale(1)}45%{filter:drop-shadow(0 0 15px #31e8ff);transform:scale(1.03)}100%{filter:drop-shadow(0 0 0 #31e8ff);transform:scale(1)}}
+      .step-ring.tiko-live-step{animation:tikoLiveStep .26s ease-out}
+      .step-ring.tiko-walking-glow{filter:drop-shadow(0 0 10px rgba(255,157,47,.95))}
+      .steps-value.tiko-count-bump{animation:tikoCountBump .24s ease-out}
+      @keyframes tikoLiveStep{0%{transform:scale(1);filter:drop-shadow(0 0 0 #31e8ff)}45%{transform:scale(1.035);filter:drop-shadow(0 0 18px #31e8ff)}100%{transform:scale(1);filter:drop-shadow(0 0 0 #31e8ff)}}
+      @keyframes tikoCountBump{0%{transform:scale(1)}45%{transform:scale(1.18)}100%{transform:scale(1)}}
     `;
     document.head.appendChild(style);
   }
 
   function pulseGauge() {
     const ring = document.getElementById('stepRing');
-    if (!ring) return;
-    ring.classList.remove('tiko-live-step');
-    void ring.offsetWidth;
-    ring.classList.add('tiko-live-step');
+    const value = document.getElementById('stepsValue');
+    if (ring) {
+      ring.classList.remove('tiko-live-step');
+      void ring.offsetWidth;
+      ring.classList.add('tiko-live-step');
+    }
+    if (value) {
+      value.classList.remove('tiko-count-bump');
+      void value.offsetWidth;
+      value.classList.add('tiko-count-bump');
+    }
+  }
+
+  function updateGaugeDirect(steps) {
+    const ring = document.getElementById('stepRing');
+    const value = document.getElementById('stepsValue');
+    const card = document.getElementById('stepsCard');
+    const remaining = document.getElementById('remainingSteps');
+    const pct = Math.max(0, Math.min(100, (steps / 10000) * 100));
+    if (ring) ring.style.setProperty('--percent', pct.toFixed(2) + '%');
+    if (value) value.textContent = String(steps);
+    if (card) card.textContent = String(steps);
+    if (remaining) remaining.textContent = String(Math.max(0, 2000 - steps));
   }
 
   async function pollActivity() {
@@ -186,7 +182,11 @@
       const state = String(snap?.motionState || 'idle');
       const ring = document.getElementById('stepRing');
 
-      if (lastSteps >= 0 && steps > lastSteps) pulseGauge();
+      updateGaugeDirect(steps);
+      if (lastSteps >= 0 && steps > lastSteps) {
+        const diff = Math.min(steps - lastSteps, 4);
+        for (let i = 0; i < diff; i++) setTimeout(pulseGauge, i * 90);
+      }
       lastSteps = steps;
       if (ring) ring.classList.toggle('tiko-walking-glow', state === 'walking');
     } catch (_) {
@@ -199,6 +199,6 @@
     installGaugePulseStyle();
     setTimeout(ensureSettingsUi, 350);
     setTimeout(ensureSettingsUi, 1500);
-    setInterval(pollActivity, 700);
+    setInterval(pollActivity, 180);
   });
 })();
