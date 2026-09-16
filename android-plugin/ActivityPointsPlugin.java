@@ -28,10 +28,12 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
     private static final String PREFS = "tikowiko_activity";
     private static final int REQ_ACTIVITY = 8842;
 
-    // Chaque événement STEP_DETECTOR fait bouger la jauge immédiatement.
-    private static final long WALK_IDLE_MS = 2600L;
-    private static final long MIN_STEP_INTERVAL_MS = 260L;
-    private static final long MAX_STEP_INTERVAL_MS = 3000L;
+    // On valide uniquement une cadence régulière de marche.
+    // Trop rapide = course/secousse ; trop lent/irrégulier = faux pas ou vibration de véhicule.
+    private static final long WALK_IDLE_MS = 2200L;
+    private static final long MIN_WALK_INTERVAL_MS = 430L;
+    private static final long MAX_WALK_INTERVAL_MS = 1250L;
+    private static final int REQUIRED_STABLE_STEPS = 3;
 
     private SensorManager sensorManager;
     private Sensor stepCounter;
@@ -46,8 +48,9 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
 
     private long lastDetectorMs = 0L;
     private long lastCounterSampleMs = 0L;
-    private String motionState = "idle"; // idle | walking
-    private String blockedReason = "";
+    private int stableWalkSteps = 0;
+    private int pendingWalkSteps = 0;
+    private String motionState = "idle"; // idle | checking | walking
 
     @Override
     public void load() {
@@ -106,8 +109,9 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
     private void resetMotionState() {
         lastDetectorMs = 0L;
         lastCounterSampleMs = 0L;
+        stableWalkSteps = 0;
+        pendingWalkSteps = 0;
         motionState = "idle";
-        blockedReason = "";
     }
 
     private void rolloverIfNeeded() {
@@ -155,9 +159,16 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
 
     private void refreshMotionState() {
         long now = SystemClock.elapsedRealtime();
-        if ("walking".equals(motionState) && lastDetectorMs > 0L && now - lastDetectorMs > WALK_IDLE_MS) {
+        if (("walking".equals(motionState) || "checking".equals(motionState)) &&
+                lastDetectorMs > 0L && now - lastDetectorMs > WALK_IDLE_MS) {
+            if (pendingWalkSteps > 0 && stableWalkSteps < REQUIRED_STABLE_STEPS) {
+                rejectedSteps += pendingWalkSteps;
+            }
+            stableWalkSteps = 0;
+            pendingWalkSteps = 0;
             motionState = "idle";
             lastDetectorMs = 0L;
+            save();
         }
     }
 
@@ -165,20 +176,39 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
         rolloverIfNeeded();
         long now = SystemClock.elapsedRealtime();
 
-        if (lastDetectorMs > 0L) {
-            long interval = now - lastDetectorMs;
-            if (interval < MIN_STEP_INTERVAL_MS) return;
-            if (interval > MAX_STEP_INTERVAL_MS) {
-                // Nouveau départ de marche : le pas reste valide mais on repart d'un état propre.
-                motionState = "idle";
-            }
+        // Premier événement : on démarre une vérification, sans créditer la jauge.
+        if (lastDetectorMs <= 0L || now - lastDetectorMs > WALK_IDLE_MS) {
+            lastDetectorMs = now;
+            stableWalkSteps = 1;
+            pendingWalkSteps = 1;
+            motionState = "checking";
+            return;
         }
 
+        long interval = now - lastDetectorMs;
         lastDetectorMs = now;
-        todaySteps += 1;
-        motionState = "walking";
-        blockedReason = "";
-        save();
+
+        // Hors cadence de marche : on rejette la séquence en cours.
+        if (interval < MIN_WALK_INTERVAL_MS || interval > MAX_WALK_INTERVAL_MS) {
+            rejectedSteps += pendingWalkSteps + 1;
+            stableWalkSteps = 0;
+            pendingWalkSteps = 0;
+            motionState = "idle";
+            save();
+            return;
+        }
+
+        stableWalkSteps++;
+        pendingWalkSteps++;
+        motionState = "checking";
+
+        // Après 3 pas réguliers, la marche est validée et la jauge rattrape immédiatement les pas en attente.
+        if (stableWalkSteps >= REQUIRED_STABLE_STEPS) {
+            todaySteps += pendingWalkSteps;
+            pendingWalkSteps = 0;
+            motionState = "walking";
+            save();
+        }
     }
 
     private void syncFromSystemCounter(float total) {
@@ -209,7 +239,7 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
         lastCounter = total;
         lastCounterSampleMs = now;
 
-        // Sur les appareils avec STEP_DETECTOR, on évite de compter deux fois.
+        // Si STEP_DETECTOR existe, il pilote seul la validation pour éviter les doubles comptes.
         if (stepDetector != null) {
             counterBase = total - todaySteps;
             save();
@@ -218,14 +248,16 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
 
         if (delta <= 0f || delta >= 100000f) return;
 
-        // Fallback sans STEP_DETECTOR : accepte uniquement une cadence de marche plausible.
+        // Fallback sans STEP_DETECTOR : plage volontairement limitée à la marche, pas à la course.
         double rate = elapsed > 0L ? (delta * 1000.0) / elapsed : 0.0;
-        if (rate >= 0.30 && rate <= 3.2) {
+        if (rate >= 0.80 && rate <= 2.25) {
             int add = Math.max(1, Math.round(delta));
             todaySteps += add;
             counterBase = total - todaySteps;
             motionState = "walking";
-            blockedReason = "";
+        } else {
+            rejectedSteps += Math.max(1, Math.round(delta));
+            motionState = "idle";
         }
         save();
     }
@@ -243,7 +275,7 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
         result.put("stepCounterAvailable", stepCounter != null);
         result.put("stepDetectorAvailable", stepDetector != null);
         result.put("shakeFilterAvailable", false);
-        result.put("strictWalkingFilter", stepDetector != null);
+        result.put("strictWalkingFilter", true);
         result.put("activityPermissionRequired", Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q);
         result.put("activityPermissionGranted", permissionGranted());
         result.put("listenersRegistered", listenersRegistered);
