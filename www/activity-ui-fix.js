@@ -6,23 +6,23 @@
     style.id = 'tikoMotionUiFix';
     style.textContent = `
       #robotMotionFx{position:absolute!important;inset:0!important;z-index:5!important;pointer-events:none!important;overflow:visible!important}
-      /* Lumière du coeur : recentrée sur le coeur réel du panda. */
+      /* Cœur : placé au centre optique de l'emblème sur la poitrine. */
       #robotMotionHeart{
-        position:absolute!important;left:50.5%!important;top:56.5%!important;
-        width:28px!important;height:26px!important;display:grid!important;place-items:center!important;
+        position:absolute!important;left:50.2%!important;top:58.4%!important;
+        width:24px!important;height:22px!important;display:grid!important;place-items:center!important;
         transform:translate(-50%,-50%) scale(1)!important;
-        font-size:23px!important;line-height:1!important;background:transparent!important;
+        font-size:20px!important;line-height:1!important;background:transparent!important;
         border:0!important;border-radius:50%!important;color:#35dfff!important;opacity:.78!important;
-        box-shadow:none!important;filter:drop-shadow(0 0 5px currentColor) drop-shadow(0 0 9px currentColor)!important;
+        box-shadow:none!important;filter:drop-shadow(0 0 4px currentColor) drop-shadow(0 0 8px currentColor)!important;
       }
-      /* Yeux : recentrés plus près des yeux visibles du robot. */
+      /* Yeux : chaque point lumineux est centré au milieu de son orbite visible. */
       #robotMotionFx .eye{
-        position:absolute!important;width:8px!important;height:7px!important;border-radius:50%!important;
-        background:#35dfff!important;color:#35dfff!important;box-shadow:0 0 5px currentColor,0 0 9px currentColor!important;
+        position:absolute!important;width:7px!important;height:7px!important;border-radius:50%!important;
+        background:#35dfff!important;color:#35dfff!important;box-shadow:0 0 4px currentColor,0 0 8px currentColor!important;
         transform:translate(-50%,-50%)!important;
       }
-      #robotMotionFx .eye.left,#robotMotionFx .eye:first-of-type{left:45.2%!important;top:35.8%!important}
-      #robotMotionFx .eye.right,#robotMotionFx .eye:last-of-type{left:55.8%!important;top:35.8%!important}
+      #robotMotionFx .eye.left,#robotMotionFx .eye:first-of-type{left:45.0%!important;top:36.9%!important}
+      #robotMotionFx .eye.right,#robotMotionFx .eye:last-of-type{left:56.2%!important;top:36.9%!important}
       #robotMotionLabel{
         top:8px!important;bottom:auto!important;left:50%!important;transform:translateX(-50%)!important;
         font-size:9px!important;padding:3px 8px!important;background:rgba(0,10,28,.76)!important;
@@ -70,7 +70,6 @@
     if (typeof original !== 'function' || original.__tikowikoStepOnlyPolicy) return;
 
     const patched = function (state, reason, steps) {
-      // Un ancien état blocked ne doit jamais transformer un simple mouvement du téléphone en accusation de triche.
       if (state === 'blocked') state = 'idle';
       return original(state, '', steps);
     };
