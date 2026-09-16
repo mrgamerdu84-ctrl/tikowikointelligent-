@@ -28,11 +28,11 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
     private static final String PREFS = "tikowiko_activity";
     private static final int REQ_ACTIVITY = 8842;
 
-    // On valide une vraie cadence de marche, puis chaque pas suivant est crédité immédiatement.
+    // On valide rapidement une vraie marche, puis 1 pas detecte = +1 immediatement.
     private static final long WALK_IDLE_MS = 1800L;
     private static final long MIN_WALK_INTERVAL_MS = 430L;
     private static final long MAX_WALK_INTERVAL_MS = 1250L;
-    private static final int REQUIRED_STABLE_STEPS = 3;
+    private static final int REQUIRED_STABLE_STEPS = 2;
 
     private SensorManager sensorManager;
     private Sensor stepCounter;
@@ -198,16 +198,18 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
 
         stableWalkSteps++;
 
-        // Une fois la marche confirmée, chaque pas fait avancer la jauge immédiatement.
-        if (stableWalkSteps >= REQUIRED_STABLE_STEPS) {
-            if (!"walking".equals(motionState)) {
-                // On crédite les premiers pas utilisés pour confirmer la marche.
-                todaySteps += pendingWalkSteps + 1;
-                pendingWalkSteps = 0;
-            } else {
-                todaySteps += 1;
-            }
+        // Au deuxieme pas regulier, on confirme la marche et on credite les pas de depart.
+        if (!"walking".equals(motionState) && stableWalkSteps >= REQUIRED_STABLE_STEPS) {
+            todaySteps += pendingWalkSteps + 1;
+            pendingWalkSteps = 0;
             motionState = "walking";
+            save();
+            return;
+        }
+
+        // Une fois la marche confirmee : 1 pas detecte = +1 tout de suite.
+        if ("walking".equals(motionState)) {
+            todaySteps += 1;
             save();
             return;
         }
@@ -245,7 +247,7 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
         lastCounter = total;
         lastCounterSampleMs = now;
 
-        // Si STEP_DETECTOR existe, il pilote la validation afin d'éviter le double comptage.
+        // Si STEP_DETECTOR existe, il pilote la validation afin d'eviter le double comptage.
         if (stepDetector != null) {
             counterBase = total - todaySteps;
             save();
