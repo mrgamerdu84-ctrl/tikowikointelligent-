@@ -116,8 +116,8 @@ jobs:
 
       - name: Install Tikowiko web robot
         run: |
-          test -s www/lv_0_20260916003429.jpg
-          test -s android/app/src/main/assets/public/lv_0_20260916003429.jpg
+          test -s www/file_000000008d508246bb9118a8f3a93dc8.png
+          test -s android/app/src/main/assets/public/file_000000008d508246bb9118a8f3a93dc8.png
 
       - name: Install Tikowiko visuals
         run: |
