@@ -28,28 +28,15 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
     private static final String PREFS = "tikowiko_activity";
     private static final int REQ_ACTIVITY = 8842;
 
-    // Marche normale : environ 30 à 139 pas/minute.
-    // Au-dessus, Tikowiko considère la cadence comme trop rapide pour les récompenses.
-    private static final long MIN_WALK_INTERVAL_MS = 430L;
-    private static final long MAX_WALK_INTERVAL_MS = 2000L;
-    private static final long WALK_IDLE_MS = 3400L;
-    private static final long BLOCK_DURATION_MS = 3200L;
+    // Tikowiko éclaire le robot uniquement après une vraie séquence de pas.
+    private static final long MIN_WALK_INTERVAL_MS = 300L;
+    private static final long MAX_WALK_INTERVAL_MS = 2600L;
+    private static final long WALK_IDLE_MS = 3800L;
     private static final int REQUIRED_STABLE_STEPS = 3;
-    private static final int FAST_HITS_TO_BLOCK = 3;
-
-    // Anti-secousse : une seule accélération forte ne suffit jamais à bloquer une vraie marche.
-    // Il faut une rafale de plusieurs mouvements très rapides, typique d'un téléphone secoué.
-    private static final long SHAKE_BURST_WINDOW_MS = 650L;
-    private static final int SHAKE_HITS_TO_BLOCK = 4;
-    private static final double LINEAR_SHAKE_THRESHOLD = 13.5;
-    private static final double RAW_SHAKE_DELTA_THRESHOLD = 12.0;
-    private static final long SHAKE_STEP_BLOCK_WINDOW_MS = 650L;
 
     private SensorManager sensorManager;
     private Sensor stepCounter;
     private Sensor stepDetector;
-    private Sensor accelerometer;
-    private Sensor linearAcceleration;
 
     private int todaySteps = 0;
     private int rejectedSteps = 0;
@@ -60,14 +47,9 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
 
     private long lastDetectorMs = 0L;
     private long lastCounterSampleMs = 0L;
-    private long blockedUntilMs = 0L;
-    private long lastStrongShakeMs = 0L;
-    private long shakeBurstStartMs = 0L;
-    private int shakeBurstCount = 0;
     private int stableWalkSteps = 0;
     private int pendingWalkSteps = 0;
-    private int fastMotionStrikes = 0;
-    private String motionState = "idle"; // idle | checking | walking | blocked
+    private String motionState = "idle"; // idle | checking | walking
     private String blockedReason = "";
 
     @Override
@@ -76,8 +58,6 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
         if (sensorManager != null) {
             stepCounter = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER);
             stepDetector = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR);
-            linearAcceleration = sensorManager.getDefaultSensor(Sensor.TYPE_LINEAR_ACCELERATION);
-            accelerometer = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
         }
         readSaved();
         registerSensorsIfAllowed();
@@ -111,18 +91,12 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
 
     private void registerSensorsIfAllowed() {
         if (sensorManager == null || !permissionGranted() || listenersRegistered) return;
-
         boolean registered = false;
         if (stepCounter != null) {
             registered = sensorManager.registerListener(this, stepCounter, SensorManager.SENSOR_DELAY_NORMAL) || registered;
         }
         if (stepDetector != null) {
             registered = sensorManager.registerListener(this, stepDetector, SensorManager.SENSOR_DELAY_NORMAL) || registered;
-        }
-        if (linearAcceleration != null) {
-            registered = sensorManager.registerListener(this, linearAcceleration, SensorManager.SENSOR_DELAY_GAME) || registered;
-        } else if (accelerometer != null) {
-            registered = sensorManager.registerListener(this, accelerometer, SensorManager.SENSOR_DELAY_GAME) || registered;
         }
         listenersRegistered = registered;
     }
@@ -135,13 +109,8 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
     private void resetMotionState() {
         lastDetectorMs = 0L;
         lastCounterSampleMs = 0L;
-        blockedUntilMs = 0L;
-        lastStrongShakeMs = 0L;
-        shakeBurstStartMs = 0L;
-        shakeBurstCount = 0;
         stableWalkSteps = 0;
         pendingWalkSteps = 0;
-        fastMotionStrikes = 0;
         motionState = "idle";
         blockedReason = "";
     }
@@ -189,60 +158,13 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
                 .apply();
     }
 
-    private void enterBlocked(String reason, int rejectedNow) {
-        rejectedSteps += Math.max(1, rejectedNow);
-        blockedUntilMs = SystemClock.elapsedRealtime() + BLOCK_DURATION_MS;
-        motionState = "blocked";
-        blockedReason = reason;
-        stableWalkSteps = 0;
-        pendingWalkSteps = 0;
-        fastMotionStrikes = 0;
-        save();
-    }
-
-    private void noteShakeHit() {
-        long now = SystemClock.elapsedRealtime();
-        if (now < blockedUntilMs) return;
-
-        if (shakeBurstStartMs == 0L || now - shakeBurstStartMs > SHAKE_BURST_WINDOW_MS) {
-            shakeBurstStartMs = now;
-            shakeBurstCount = 1;
-            return;
-        }
-
-        shakeBurstCount++;
-        if (shakeBurstCount >= SHAKE_HITS_TO_BLOCK) {
-            lastStrongShakeMs = now;
-            shakeBurstCount = 0;
-            shakeBurstStartMs = 0L;
-            enterBlocked("secousses répétées du téléphone détectées", 1);
-        }
-    }
-
     private void refreshMotionState() {
         long now = SystemClock.elapsedRealtime();
-        if (shakeBurstStartMs > 0L && now - shakeBurstStartMs > SHAKE_BURST_WINDOW_MS) {
-            shakeBurstStartMs = 0L;
-            shakeBurstCount = 0;
-        }
-
-        if ("blocked".equals(motionState)) {
-            if (now >= blockedUntilMs) {
-                motionState = "idle";
-                blockedReason = "";
-                stableWalkSteps = 0;
-                pendingWalkSteps = 0;
-                fastMotionStrikes = 0;
-                lastDetectorMs = 0L;
-            }
-            return;
-        }
         if (("walking".equals(motionState) || "checking".equals(motionState)) &&
                 lastDetectorMs > 0L && now - lastDetectorMs > WALK_IDLE_MS) {
             motionState = "idle";
             stableWalkSteps = 0;
             pendingWalkSteps = 0;
-            fastMotionStrikes = 0;
             lastDetectorMs = 0L;
         }
     }
@@ -251,24 +173,10 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
         rolloverIfNeeded();
         long now = SystemClock.elapsedRealtime();
 
-        if (now < blockedUntilMs) {
-            rejectedSteps++;
-            lastDetectorMs = now;
-            save();
-            return;
-        }
-
-        if (lastStrongShakeMs > 0L && now - lastStrongShakeMs <= SHAKE_STEP_BLOCK_WINDOW_MS) {
-            lastDetectorMs = now;
-            enterBlocked("secousse du téléphone détectée", 1);
-            return;
-        }
-
         if (lastDetectorMs <= 0L || now - lastDetectorMs > WALK_IDLE_MS) {
             lastDetectorMs = now;
             stableWalkSteps = 1;
             pendingWalkSteps = 1;
-            fastMotionStrikes = 0;
             motionState = "checking";
             blockedReason = "";
             return;
@@ -277,21 +185,7 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
         long interval = now - lastDetectorMs;
         lastDetectorMs = now;
 
-        if (interval < MIN_WALK_INTERVAL_MS) {
-            fastMotionStrikes++;
-            stableWalkSteps = 0;
-            pendingWalkSteps = 0;
-            motionState = "checking";
-            blockedReason = "";
-            if (fastMotionStrikes >= FAST_HITS_TO_BLOCK) {
-                enterBlocked("cadence trop rapide : marche très rapide ou course", fastMotionStrikes);
-            }
-            return;
-        }
-
-        fastMotionStrikes = 0;
-
-        if (interval > MAX_WALK_INTERVAL_MS) {
+        if (interval < MIN_WALK_INTERVAL_MS || interval > MAX_WALK_INTERVAL_MS) {
             stableWalkSteps = 1;
             pendingWalkSteps = 1;
             motionState = "checking";
@@ -303,8 +197,6 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
         pendingWalkSteps++;
         motionState = "checking";
 
-        // Dès que trois pas réguliers confirment une vraie marche, les trois premiers sont crédités.
-        // Ensuite chaque pas valide fait monter le compteur immédiatement.
         if (stableWalkSteps >= REQUIRED_STABLE_STEPS) {
             todaySteps += pendingWalkSteps;
             pendingWalkSteps = 0;
@@ -314,10 +206,6 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
         }
     }
 
-    /**
-     * Le compteur système sert de référence quand STEP_DETECTOR existe.
-     * Sans STEP_DETECTOR, on garde un fallback prudent plutôt que de désactiver totalement les pas.
-     */
     private void syncFromSystemCounter(float total) {
         rolloverIfNeeded();
         long now = SystemClock.elapsedRealtime();
@@ -346,6 +234,7 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
         lastCounter = total;
         lastCounterSampleMs = now;
 
+        // Si STEP_DETECTOR existe, lui seul pilote l'état visuel et les pas validés.
         if (stepDetector != null) {
             counterBase = total - todaySteps;
             save();
@@ -354,19 +243,12 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
 
         if (delta <= 0f || delta >= 100000f) return;
 
+        // Fallback pour les appareils sans STEP_DETECTOR : on ne réagit qu'à une cadence compatible avec la marche.
         double rate = elapsed > 0L ? (delta * 1000.0) / elapsed : 0.0;
-        if (elapsed > 0L && elapsed < 6000L && rate > 2.35) {
-            enterBlocked("cadence trop rapide détectée", Math.max(1, Math.round(delta)));
-            return;
-        }
-
-        if (rate >= 0.45 && rate <= 2.35) {
+        if (rate >= 0.35 && rate <= 3.0) {
             todaySteps += Math.round(delta);
             counterBase = total - todaySteps;
             motionState = "walking";
-            blockedReason = "";
-        } else {
-            motionState = "checking";
             blockedReason = "";
         }
         save();
@@ -384,14 +266,14 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
         result.put("sensorAvailable", stepCounter != null || stepDetector != null);
         result.put("stepCounterAvailable", stepCounter != null);
         result.put("stepDetectorAvailable", stepDetector != null);
-        result.put("shakeFilterAvailable", linearAcceleration != null || accelerometer != null);
+        result.put("shakeFilterAvailable", false);
         result.put("strictWalkingFilter", stepDetector != null);
         result.put("activityPermissionRequired", Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q);
         result.put("activityPermissionGranted", permissionGranted());
         result.put("listenersRegistered", listenersRegistered);
         result.put("countsWhileClosed", stepDetector == null && stepCounter != null);
         result.put("motionState", motionState);
-        result.put("blockedReason", blockedReason);
+        result.put("blockedReason", "");
         result.put("day", dayKey);
         call.resolve(result);
     }
@@ -422,35 +304,17 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
     public void onSensorChanged(SensorEvent event) {
         if (!permissionGranted()) return;
 
-        if (event.sensor.getType() == Sensor.TYPE_LINEAR_ACCELERATION) {
-            double x = event.values[0];
-            double y = event.values[1];
-            double z = event.values[2];
-            double magnitude = Math.sqrt(x * x + y * y + z * z);
-            if (magnitude >= LINEAR_SHAKE_THRESHOLD) noteShakeHit();
-            return;
-        }
-
-        if (event.sensor.getType() == Sensor.TYPE_ACCELEROMETER && linearAcceleration == null) {
-            double x = event.values[0];
-            double y = event.values[1];
-            double z = event.values[2];
-            double magnitude = Math.sqrt(x * x + y * y + z * z);
-            double deltaFromGravity = Math.abs(magnitude - SensorManager.GRAVITY_EARTH);
-            if (deltaFromGravity >= RAW_SHAKE_DELTA_THRESHOLD) noteShakeHit();
-            return;
-        }
-
         if (event.sensor.getType() == Sensor.TYPE_STEP_COUNTER) {
             syncFromSystemCounter(event.values[0]);
             return;
         }
 
         if (event.sensor.getType() == Sensor.TYPE_STEP_DETECTOR) {
-            handleDetectedStep();
+            if (event.values.length > 0 && event.values[0] >= 1f) handleDetectedStep();
         }
     }
 
     @Override
-    public void onAccuracyChanged(Sensor sensor, int accuracy) { }
+    public void onAccuracyChanged(Sensor sensor, int accuracy) {
+    }
 }
