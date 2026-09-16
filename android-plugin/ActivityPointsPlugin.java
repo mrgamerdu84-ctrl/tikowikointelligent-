@@ -28,11 +28,10 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
     private static final String PREFS = "tikowiko_activity";
     private static final int REQ_ACTIVITY = 8842;
 
-    // Tikowiko éclaire le robot uniquement après une vraie séquence de pas.
-    private static final long MIN_WALK_INTERVAL_MS = 300L;
-    private static final long MAX_WALK_INTERVAL_MS = 2600L;
-    private static final long WALK_IDLE_MS = 3800L;
-    private static final int REQUIRED_STABLE_STEPS = 3;
+    // Chaque événement STEP_DETECTOR fait bouger la jauge immédiatement.
+    private static final long WALK_IDLE_MS = 2600L;
+    private static final long MIN_STEP_INTERVAL_MS = 260L;
+    private static final long MAX_STEP_INTERVAL_MS = 3000L;
 
     private SensorManager sensorManager;
     private Sensor stepCounter;
@@ -47,9 +46,7 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
 
     private long lastDetectorMs = 0L;
     private long lastCounterSampleMs = 0L;
-    private int stableWalkSteps = 0;
-    private int pendingWalkSteps = 0;
-    private String motionState = "idle"; // idle | checking | walking
+    private String motionState = "idle"; // idle | walking
     private String blockedReason = "";
 
     @Override
@@ -96,7 +93,7 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
             registered = sensorManager.registerListener(this, stepCounter, SensorManager.SENSOR_DELAY_NORMAL) || registered;
         }
         if (stepDetector != null) {
-            registered = sensorManager.registerListener(this, stepDetector, SensorManager.SENSOR_DELAY_NORMAL) || registered;
+            registered = sensorManager.registerListener(this, stepDetector, SensorManager.SENSOR_DELAY_FASTEST) || registered;
         }
         listenersRegistered = registered;
     }
@@ -109,8 +106,6 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
     private void resetMotionState() {
         lastDetectorMs = 0L;
         lastCounterSampleMs = 0L;
-        stableWalkSteps = 0;
-        pendingWalkSteps = 0;
         motionState = "idle";
         blockedReason = "";
     }
@@ -160,11 +155,8 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
 
     private void refreshMotionState() {
         long now = SystemClock.elapsedRealtime();
-        if (("walking".equals(motionState) || "checking".equals(motionState)) &&
-                lastDetectorMs > 0L && now - lastDetectorMs > WALK_IDLE_MS) {
+        if ("walking".equals(motionState) && lastDetectorMs > 0L && now - lastDetectorMs > WALK_IDLE_MS) {
             motionState = "idle";
-            stableWalkSteps = 0;
-            pendingWalkSteps = 0;
             lastDetectorMs = 0L;
         }
     }
@@ -173,37 +165,20 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
         rolloverIfNeeded();
         long now = SystemClock.elapsedRealtime();
 
-        if (lastDetectorMs <= 0L || now - lastDetectorMs > WALK_IDLE_MS) {
-            lastDetectorMs = now;
-            stableWalkSteps = 1;
-            pendingWalkSteps = 1;
-            motionState = "checking";
-            blockedReason = "";
-            return;
+        if (lastDetectorMs > 0L) {
+            long interval = now - lastDetectorMs;
+            if (interval < MIN_STEP_INTERVAL_MS) return;
+            if (interval > MAX_STEP_INTERVAL_MS) {
+                // Nouveau départ de marche : le pas reste valide mais on repart d'un état propre.
+                motionState = "idle";
+            }
         }
 
-        long interval = now - lastDetectorMs;
         lastDetectorMs = now;
-
-        if (interval < MIN_WALK_INTERVAL_MS || interval > MAX_WALK_INTERVAL_MS) {
-            stableWalkSteps = 1;
-            pendingWalkSteps = 1;
-            motionState = "checking";
-            blockedReason = "";
-            return;
-        }
-
-        stableWalkSteps++;
-        pendingWalkSteps++;
-        motionState = "checking";
-
-        if (stableWalkSteps >= REQUIRED_STABLE_STEPS) {
-            todaySteps += pendingWalkSteps;
-            pendingWalkSteps = 0;
-            motionState = "walking";
-            blockedReason = "";
-            save();
-        }
+        todaySteps += 1;
+        motionState = "walking";
+        blockedReason = "";
+        save();
     }
 
     private void syncFromSystemCounter(float total) {
@@ -234,7 +209,7 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
         lastCounter = total;
         lastCounterSampleMs = now;
 
-        // Si STEP_DETECTOR existe, lui seul pilote l'état visuel et les pas validés.
+        // Sur les appareils avec STEP_DETECTOR, on évite de compter deux fois.
         if (stepDetector != null) {
             counterBase = total - todaySteps;
             save();
@@ -243,10 +218,11 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
 
         if (delta <= 0f || delta >= 100000f) return;
 
-        // Fallback pour les appareils sans STEP_DETECTOR : on ne réagit qu'à une cadence compatible avec la marche.
+        // Fallback sans STEP_DETECTOR : accepte uniquement une cadence de marche plausible.
         double rate = elapsed > 0L ? (delta * 1000.0) / elapsed : 0.0;
-        if (rate >= 0.35 && rate <= 3.0) {
-            todaySteps += Math.round(delta);
+        if (rate >= 0.30 && rate <= 3.2) {
+            int add = Math.max(1, Math.round(delta));
+            todaySteps += add;
             counterBase = total - todaySteps;
             motionState = "walking";
             blockedReason = "";
