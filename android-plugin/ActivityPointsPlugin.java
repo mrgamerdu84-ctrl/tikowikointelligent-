@@ -28,9 +28,8 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
     private static final String PREFS = "tikowiko_activity";
     private static final int REQ_ACTIVITY = 8842;
 
-    // On valide uniquement une cadence régulière de marche.
-    // Trop rapide = course/secousse ; trop lent/irrégulier = faux pas ou vibration de véhicule.
-    private static final long WALK_IDLE_MS = 2200L;
+    // On valide une vraie cadence de marche, puis chaque pas suivant est crédité immédiatement.
+    private static final long WALK_IDLE_MS = 1800L;
     private static final long MIN_WALK_INTERVAL_MS = 430L;
     private static final long MAX_WALK_INTERVAL_MS = 1250L;
     private static final int REQUIRED_STABLE_STEPS = 3;
@@ -176,19 +175,18 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
         rolloverIfNeeded();
         long now = SystemClock.elapsedRealtime();
 
-        // Premier événement : on démarre une vérification, sans créditer la jauge.
         if (lastDetectorMs <= 0L || now - lastDetectorMs > WALK_IDLE_MS) {
             lastDetectorMs = now;
             stableWalkSteps = 1;
             pendingWalkSteps = 1;
             motionState = "checking";
+            save();
             return;
         }
 
         long interval = now - lastDetectorMs;
         lastDetectorMs = now;
 
-        // Hors cadence de marche : on rejette la séquence en cours.
         if (interval < MIN_WALK_INTERVAL_MS || interval > MAX_WALK_INTERVAL_MS) {
             rejectedSteps += pendingWalkSteps + 1;
             stableWalkSteps = 0;
@@ -199,16 +197,24 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
         }
 
         stableWalkSteps++;
-        pendingWalkSteps++;
-        motionState = "checking";
 
-        // Après 3 pas réguliers, la marche est validée et la jauge rattrape immédiatement les pas en attente.
+        // Une fois la marche confirmée, chaque pas fait avancer la jauge immédiatement.
         if (stableWalkSteps >= REQUIRED_STABLE_STEPS) {
-            todaySteps += pendingWalkSteps;
-            pendingWalkSteps = 0;
+            if (!"walking".equals(motionState)) {
+                // On crédite les premiers pas utilisés pour confirmer la marche.
+                todaySteps += pendingWalkSteps + 1;
+                pendingWalkSteps = 0;
+            } else {
+                todaySteps += 1;
+            }
             motionState = "walking";
             save();
+            return;
         }
+
+        pendingWalkSteps++;
+        motionState = "checking";
+        save();
     }
 
     private void syncFromSystemCounter(float total) {
@@ -239,7 +245,7 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
         lastCounter = total;
         lastCounterSampleMs = now;
 
-        // Si STEP_DETECTOR existe, il pilote seul la validation pour éviter les doubles comptes.
+        // Si STEP_DETECTOR existe, il pilote la validation afin d'éviter le double comptage.
         if (stepDetector != null) {
             counterBase = total - todaySteps;
             save();
@@ -248,7 +254,6 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
 
         if (delta <= 0f || delta >= 100000f) return;
 
-        // Fallback sans STEP_DETECTOR : plage volontairement limitée à la marche, pas à la course.
         double rate = elapsed > 0L ? (delta * 1000.0) / elapsed : 0.0;
         if (rate >= 0.80 && rate <= 2.25) {
             int add = Math.max(1, Math.round(delta));
