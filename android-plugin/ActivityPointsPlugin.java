@@ -30,7 +30,6 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
     private static final String PREFS = "tikowiko_activity";
     private static final int REQ_ACTIVITY = 8842;
 
-    // Marche naturelle : on tolere les variations humaines, mais on bloque les rafales/secousses evidentes.
     private static final long WALK_IDLE_MS = 2600L;
     private static final long MIN_WALK_INTERVAL_MS = 300L;
     private static final long MAX_WALK_INTERVAL_MS = 1800L;
@@ -38,6 +37,8 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
     private static final int CADENCE_WINDOW = 6;
     private static final double MAX_INTERVAL_VARIATION_RATIO = 0.65;
     private static final long DUPLICATE_BURST_MS = 180L;
+    private static final int SHAKE_STRIKES_TO_LOCK = 3;
+    private static final long SHAKE_STRIKE_WINDOW_MS = 3500L;
 
     private SensorManager sensorManager;
     private Sensor stepCounter;
@@ -55,9 +56,13 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
     private long lastCounterSampleMs = 0L;
     private int stableWalkSteps = 0;
     private int pendingWalkSteps = 0;
-    private String motionState = "idle"; // idle | checking | walking
+    private String motionState = "idle";
     private String blockedReason = "";
     private final Deque<Long> recentIntervals = new ArrayDeque<>();
+
+    private int shakeStrikes = 0;
+    private long firstShakeStrikeMs = 0L;
+    private boolean antiCheatLocked = false;
 
     @Override
     public void load() {
@@ -121,6 +126,8 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
         motionState = "idle";
         blockedReason = "";
         recentIntervals.clear();
+        shakeStrikes = 0;
+        firstShakeStrikeMs = 0L;
     }
 
     private void rolloverIfNeeded() {
@@ -132,6 +139,7 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
             rejectedSteps = 0;
             counterBase = -1f;
             lastCounter = -1f;
+            antiCheatLocked = false;
             resetMotionState();
             save();
         }
@@ -147,6 +155,7 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
             rejectedSteps = 0;
             counterBase = -1f;
             lastCounter = -1f;
+            antiCheatLocked = false;
             resetMotionState();
             save();
             return;
@@ -156,6 +165,7 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
         rejectedSteps = p.getInt("rejectedSteps", 0);
         counterBase = p.getFloat("counterBase", -1f);
         lastCounter = p.getFloat("lastCounter", -1f);
+        antiCheatLocked = false;
         resetMotionState();
     }
 
@@ -171,10 +181,10 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
     }
 
     private void refreshMotionState() {
+        if (antiCheatLocked) return;
         long now = SystemClock.elapsedRealtime();
         if (("walking".equals(motionState) || "checking".equals(motionState)) &&
                 lastDetectorMs > 0L && now - lastDetectorMs > WALK_IDLE_MS) {
-            // Une pause courte ne doit pas annuler toute la marche precedente.
             if (pendingWalkSteps > 0 && stableWalkSteps < REQUIRED_STABLE_STEPS) {
                 rejectedSteps += pendingWalkSteps;
             }
@@ -188,10 +198,37 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
         }
     }
 
-    private void rejectCurrentEvent(String reason) {
+    private void triggerAntiCheatLock(String reason) {
+        todaySteps = 0;
+        validatedRewardSteps = 0;
+        rejectedSteps += Math.max(1, pendingWalkSteps);
+        pendingWalkSteps = 0;
+        stableWalkSteps = 0;
+        recentIntervals.clear();
+        lastDetectorMs = 0L;
+        motionState = "blocked";
+        blockedReason = reason;
+        antiCheatLocked = true;
+        save();
+    }
+
+    private void registerShakeStrike(String reason) {
+        long now = SystemClock.elapsedRealtime();
+        if (firstShakeStrikeMs <= 0L || now - firstShakeStrikeMs > SHAKE_STRIKE_WINDOW_MS) {
+            firstShakeStrikeMs = now;
+            shakeStrikes = 1;
+        } else {
+            shakeStrikes++;
+        }
+
         rejectedSteps += 1;
         blockedReason = reason;
-        // Si la marche etait deja validee, on ignore seulement cet evenement douteux.
+
+        if (shakeStrikes >= SHAKE_STRIKES_TO_LOCK) {
+            triggerAntiCheatLock("secousses_detectees_redemarrer");
+            return;
+        }
+
         if (!"walking".equals(motionState)) {
             stableWalkSteps = 0;
             pendingWalkSteps = 0;
@@ -218,14 +255,11 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
         variance /= recentIntervals.size();
         double std = Math.sqrt(variance);
         double ratio = mean > 0 ? std / mean : 1.0;
-
-        // On ne rejette plus une marche simplement parce qu'elle est assez reguliere.
-        // Seules les sequences extremement chaotiques sont bloquees ici.
         return ratio <= MAX_INTERVAL_VARIATION_RATIO;
     }
 
     private void creditValidatedStep(int count) {
-        if (count <= 0) return;
+        if (count <= 0 || antiCheatLocked) return;
         todaySteps += count;
         validatedRewardSteps += count;
         blockedReason = "";
@@ -234,6 +268,7 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
 
     private void handleDetectedStep() {
         rolloverIfNeeded();
+        if (antiCheatLocked) return;
         long now = SystemClock.elapsedRealtime();
 
         if (lastDetectorMs <= 0L || now - lastDetectorMs > WALK_IDLE_MS) {
@@ -251,15 +286,14 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
         lastDetectorMs = now;
 
         if (interval < DUPLICATE_BURST_MS) {
-            rejectCurrentEvent("secousse");
+            registerShakeStrike("secousse");
             return;
         }
         if (interval < MIN_WALK_INTERVAL_MS) {
-            rejectCurrentEvent("course_ou_secousse");
+            registerShakeStrike("course_ou_secousse");
             return;
         }
         if (interval > MAX_WALK_INTERVAL_MS) {
-            // Une vraie marche peut ralentir ou hesiter : on repart en validation au lieu d'annuler la promenade.
             stableWalkSteps = 1;
             pendingWalkSteps = 1;
             recentIntervals.clear();
@@ -269,8 +303,13 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
             return;
         }
         if (!cadenceLooksHuman(interval)) {
-            rejectCurrentEvent("mouvement_incoherent");
+            registerShakeStrike("mouvement_incoherent");
             return;
+        }
+
+        if (shakeStrikes > 0 && firstShakeStrikeMs > 0L && now - firstShakeStrikeMs > SHAKE_STRIKE_WINDOW_MS) {
+            shakeStrikes = 0;
+            firstShakeStrikeMs = 0L;
         }
 
         stableWalkSteps++;
@@ -296,6 +335,7 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
 
     private void syncFromSystemCounter(float total) {
         rolloverIfNeeded();
+        if (antiCheatLocked) return;
         long now = SystemClock.elapsedRealtime();
 
         if (lastCounter < 0f) {
@@ -330,7 +370,6 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
 
         if (delta <= 0f || delta >= 100000f) return;
 
-        // Fallback plus tolerant si le telephone ne possede pas STEP_DETECTOR.
         double rate = elapsed > 0L ? (delta * 1000.0) / elapsed : 0.0;
         if (rate >= 0.45 && rate <= 2.60 && delta <= 12f) {
             int add = Math.max(1, Math.round(delta));
@@ -340,9 +379,7 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
             motionState = "walking";
             blockedReason = "";
         } else {
-            rejectedSteps += Math.max(1, Math.round(delta));
-            motionState = "idle";
-            blockedReason = "mouvement_non_valide";
+            registerShakeStrike("mouvement_non_valide");
         }
         save();
     }
@@ -368,6 +405,8 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
         result.put("countsWhileClosed", stepDetector == null && stepCounter != null);
         result.put("motionState", motionState);
         result.put("blockedReason", blockedReason);
+        result.put("antiCheatLocked", antiCheatLocked);
+        result.put("restartRequired", antiCheatLocked);
         result.put("day", dayKey);
         call.resolve(result);
     }
@@ -396,7 +435,7 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
 
     @Override
     public void onSensorChanged(SensorEvent event) {
-        if (!permissionGranted()) return;
+        if (!permissionGranted() || antiCheatLocked) return;
 
         if (event.sensor.getType() == Sensor.TYPE_STEP_COUNTER) {
             syncFromSystemCounter(event.values[0]);
