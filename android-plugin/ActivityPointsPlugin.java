@@ -30,14 +30,14 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
     private static final String PREFS = "tikowiko_activity";
     private static final int REQ_ACTIVITY = 8842;
 
-    // Anti-triche local : la marche doit rester humaine et régulière.
-    private static final long WALK_IDLE_MS = 1800L;
-    private static final long MIN_WALK_INTERVAL_MS = 430L;
-    private static final long MAX_WALK_INTERVAL_MS = 1250L;
-    private static final int REQUIRED_STABLE_STEPS = 3;
+    // Marche naturelle : on tolere les variations humaines, mais on bloque les rafales/secousses evidentes.
+    private static final long WALK_IDLE_MS = 2600L;
+    private static final long MIN_WALK_INTERVAL_MS = 300L;
+    private static final long MAX_WALK_INTERVAL_MS = 1800L;
+    private static final int REQUIRED_STABLE_STEPS = 2;
     private static final int CADENCE_WINDOW = 6;
-    private static final double MAX_INTERVAL_VARIATION_RATIO = 0.34;
-    private static final long DUPLICATE_BURST_MS = 220L;
+    private static final double MAX_INTERVAL_VARIATION_RATIO = 0.65;
+    private static final long DUPLICATE_BURST_MS = 180L;
 
     private SensorManager sensorManager;
     private Sensor stepCounter;
@@ -103,7 +103,7 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
             registered = sensorManager.registerListener(this, stepCounter, SensorManager.SENSOR_DELAY_NORMAL) || registered;
         }
         if (stepDetector != null) {
-            registered = sensorManager.registerListener(this, stepDetector, SensorManager.SENSOR_DELAY_FASTEST) || registered;
+            registered = sensorManager.registerListener(this, stepDetector, SensorManager.SENSOR_DELAY_FASTEST, 0) || registered;
         }
         listenersRegistered = registered;
     }
@@ -174,6 +174,7 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
         long now = SystemClock.elapsedRealtime();
         if (("walking".equals(motionState) || "checking".equals(motionState)) &&
                 lastDetectorMs > 0L && now - lastDetectorMs > WALK_IDLE_MS) {
+            // Une pause courte ne doit pas annuler toute la marche precedente.
             if (pendingWalkSteps > 0 && stableWalkSteps < REQUIRED_STABLE_STEPS) {
                 rejectedSteps += pendingWalkSteps;
             }
@@ -187,20 +188,24 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
         }
     }
 
-    private void rejectSequence(String reason, int extraRejected) {
-        rejectedSteps += Math.max(0, pendingWalkSteps + extraRejected);
-        stableWalkSteps = 0;
-        pendingWalkSteps = 0;
-        recentIntervals.clear();
-        motionState = "idle";
+    private void rejectCurrentEvent(String reason) {
+        rejectedSteps += 1;
         blockedReason = reason;
+        // Si la marche etait deja validee, on ignore seulement cet evenement douteux.
+        if (!"walking".equals(motionState)) {
+            stableWalkSteps = 0;
+            pendingWalkSteps = 0;
+            recentIntervals.clear();
+            motionState = "idle";
+            lastDetectorMs = 0L;
+        }
         save();
     }
 
     private boolean cadenceLooksHuman(long interval) {
         recentIntervals.addLast(interval);
         while (recentIntervals.size() > CADENCE_WINDOW) recentIntervals.removeFirst();
-        if (recentIntervals.size() < 3) return true;
+        if (recentIntervals.size() < 4) return true;
 
         double sum = 0.0;
         for (long v : recentIntervals) sum += v;
@@ -214,9 +219,8 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
         double std = Math.sqrt(variance);
         double ratio = mean > 0 ? std / mean : 1.0;
 
-        // Une secousse mécanique/répétitive est souvent trop régulière. Une vraie marche varie naturellement.
-        if (recentIntervals.size() >= 5 && ratio < 0.035) return false;
-        // Une séquence très irrégulière ressemble plus à des faux déclenchements qu'à une marche continue.
+        // On ne rejette plus une marche simplement parce qu'elle est assez reguliere.
+        // Seules les sequences extremement chaotiques sont bloquees ici.
         return ratio <= MAX_INTERVAL_VARIATION_RATIO;
     }
 
@@ -247,26 +251,31 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
         lastDetectorMs = now;
 
         if (interval < DUPLICATE_BURST_MS) {
-            rejectSequence("secousse", 1);
+            rejectCurrentEvent("secousse");
             return;
         }
         if (interval < MIN_WALK_INTERVAL_MS) {
-            rejectSequence("course_ou_secousse", 1);
+            rejectCurrentEvent("course_ou_secousse");
             return;
         }
         if (interval > MAX_WALK_INTERVAL_MS) {
-            rejectSequence("cadence_incoherente", 1);
+            // Une vraie marche peut ralentir ou hesiter : on repart en validation au lieu d'annuler la promenade.
+            stableWalkSteps = 1;
+            pendingWalkSteps = 1;
+            recentIntervals.clear();
+            motionState = "checking";
+            blockedReason = "";
+            save();
             return;
         }
         if (!cadenceLooksHuman(interval)) {
-            rejectSequence("secousse_repetitive", 1);
+            rejectCurrentEvent("mouvement_incoherent");
             return;
         }
 
         stableWalkSteps++;
 
         if (!"walking".equals(motionState) && stableWalkSteps >= REQUIRED_STABLE_STEPS) {
-            // On valide la petite séquence de départ, puis chaque pas suivant sera crédité immédiatement.
             creditValidatedStep(pendingWalkSteps + 1);
             pendingWalkSteps = 0;
             motionState = "walking";
@@ -313,7 +322,6 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
         lastCounter = total;
         lastCounterSampleMs = now;
 
-        // STEP_DETECTOR reste la source principale afin d'éviter le double comptage.
         if (stepDetector != null) {
             counterBase = total - todaySteps;
             save();
@@ -322,9 +330,9 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
 
         if (delta <= 0f || delta >= 100000f) return;
 
-        // Fallback si le téléphone ne possède pas STEP_DETECTOR : très conservateur pour les récompenses.
+        // Fallback plus tolerant si le telephone ne possede pas STEP_DETECTOR.
         double rate = elapsed > 0L ? (delta * 1000.0) / elapsed : 0.0;
-        if (rate >= 0.80 && rate <= 1.85 && delta <= 6f) {
+        if (rate >= 0.45 && rate <= 2.60 && delta <= 12f) {
             int add = Math.max(1, Math.round(delta));
             todaySteps += add;
             validatedRewardSteps += add;
