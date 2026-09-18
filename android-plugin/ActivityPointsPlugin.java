@@ -30,6 +30,7 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
     private static final String PREFS = "tikowiko_activity";
     private static final int REQ_ACTIVITY = 8842;
 
+    // Reprend la detection de marche qui fonctionnait sur la version #157.
     private static final long WALK_IDLE_MS = 2600L;
     private static final long MIN_WALK_INTERVAL_MS = 300L;
     private static final long MAX_WALK_INTERVAL_MS = 1800L;
@@ -37,8 +38,6 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
     private static final int CADENCE_WINDOW = 6;
     private static final double MAX_INTERVAL_VARIATION_RATIO = 0.65;
     private static final long DUPLICATE_BURST_MS = 180L;
-    private static final int SHAKE_STRIKES_TO_LOCK = 3;
-    private static final long SHAKE_STRIKE_WINDOW_MS = 3500L;
 
     private SensorManager sensorManager;
     private Sensor stepCounter;
@@ -59,10 +58,6 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
     private String motionState = "idle";
     private String blockedReason = "";
     private final Deque<Long> recentIntervals = new ArrayDeque<>();
-
-    private int shakeStrikes = 0;
-    private long firstShakeStrikeMs = 0L;
-    private boolean antiCheatLocked = false;
 
     @Override
     public void load() {
@@ -126,8 +121,6 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
         motionState = "idle";
         blockedReason = "";
         recentIntervals.clear();
-        shakeStrikes = 0;
-        firstShakeStrikeMs = 0L;
     }
 
     private void rolloverIfNeeded() {
@@ -139,7 +132,6 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
             rejectedSteps = 0;
             counterBase = -1f;
             lastCounter = -1f;
-            antiCheatLocked = false;
             resetMotionState();
             save();
         }
@@ -155,7 +147,6 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
             rejectedSteps = 0;
             counterBase = -1f;
             lastCounter = -1f;
-            antiCheatLocked = false;
             resetMotionState();
             save();
             return;
@@ -165,7 +156,6 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
         rejectedSteps = p.getInt("rejectedSteps", 0);
         counterBase = p.getFloat("counterBase", -1f);
         lastCounter = p.getFloat("lastCounter", -1f);
-        antiCheatLocked = false;
         resetMotionState();
     }
 
@@ -181,7 +171,6 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
     }
 
     private void refreshMotionState() {
-        if (antiCheatLocked) return;
         long now = SystemClock.elapsedRealtime();
         if (("walking".equals(motionState) || "checking".equals(motionState)) &&
                 lastDetectorMs > 0L && now - lastDetectorMs > WALK_IDLE_MS) {
@@ -198,37 +187,9 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
         }
     }
 
-    private void triggerAntiCheatLock(String reason) {
-        todaySteps = 0;
-        validatedRewardSteps = 0;
-        rejectedSteps += Math.max(1, pendingWalkSteps);
-        pendingWalkSteps = 0;
-        stableWalkSteps = 0;
-        recentIntervals.clear();
-        lastDetectorMs = 0L;
-        motionState = "blocked";
-        blockedReason = reason;
-        antiCheatLocked = true;
-        save();
-    }
-
-    private void registerShakeStrike(String reason) {
-        long now = SystemClock.elapsedRealtime();
-        if (firstShakeStrikeMs <= 0L || now - firstShakeStrikeMs > SHAKE_STRIKE_WINDOW_MS) {
-            firstShakeStrikeMs = now;
-            shakeStrikes = 1;
-        } else {
-            shakeStrikes++;
-        }
-
+    private void rejectCurrentEvent(String reason) {
         rejectedSteps += 1;
         blockedReason = reason;
-
-        if (shakeStrikes >= SHAKE_STRIKES_TO_LOCK) {
-            triggerAntiCheatLock("secousses_detectees_redemarrer");
-            return;
-        }
-
         if (!"walking".equals(motionState)) {
             stableWalkSteps = 0;
             pendingWalkSteps = 0;
@@ -259,17 +220,16 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
     }
 
     private void creditValidatedStep(int count) {
-        if (count <= 0 || antiCheatLocked) return;
+        if (count <= 0) return;
         todaySteps += count;
         validatedRewardSteps += count;
         blockedReason = "";
         save();
     }
 
-    private void handleDetectedStep() {
+    private void handleDetectedStep(long eventMs) {
         rolloverIfNeeded();
-        if (antiCheatLocked) return;
-        long now = SystemClock.elapsedRealtime();
+        long now = eventMs > 0L ? eventMs : SystemClock.elapsedRealtime();
 
         if (lastDetectorMs <= 0L || now - lastDetectorMs > WALK_IDLE_MS) {
             lastDetectorMs = now;
@@ -286,11 +246,11 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
         lastDetectorMs = now;
 
         if (interval < DUPLICATE_BURST_MS) {
-            registerShakeStrike("secousse");
+            rejectCurrentEvent("secousse");
             return;
         }
         if (interval < MIN_WALK_INTERVAL_MS) {
-            registerShakeStrike("course_ou_secousse");
+            rejectCurrentEvent("course_ou_secousse");
             return;
         }
         if (interval > MAX_WALK_INTERVAL_MS) {
@@ -303,13 +263,8 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
             return;
         }
         if (!cadenceLooksHuman(interval)) {
-            registerShakeStrike("mouvement_incoherent");
+            rejectCurrentEvent("mouvement_incoherent");
             return;
-        }
-
-        if (shakeStrikes > 0 && firstShakeStrikeMs > 0L && now - firstShakeStrikeMs > SHAKE_STRIKE_WINDOW_MS) {
-            shakeStrikes = 0;
-            firstShakeStrikeMs = 0L;
         }
 
         stableWalkSteps++;
@@ -335,7 +290,6 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
 
     private void syncFromSystemCounter(float total) {
         rolloverIfNeeded();
-        if (antiCheatLocked) return;
         long now = SystemClock.elapsedRealtime();
 
         if (lastCounter < 0f) {
@@ -379,7 +333,9 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
             motionState = "walking";
             blockedReason = "";
         } else {
-            registerShakeStrike("mouvement_non_valide");
+            rejectedSteps += Math.max(1, Math.round(delta));
+            motionState = "idle";
+            blockedReason = "mouvement_non_valide";
         }
         save();
     }
@@ -405,8 +361,8 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
         result.put("countsWhileClosed", stepDetector == null && stepCounter != null);
         result.put("motionState", motionState);
         result.put("blockedReason", blockedReason);
-        result.put("antiCheatLocked", antiCheatLocked);
-        result.put("restartRequired", antiCheatLocked);
+        result.put("antiCheatLocked", false);
+        result.put("restartRequired", false);
         result.put("day", dayKey);
         call.resolve(result);
     }
@@ -435,7 +391,7 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
 
     @Override
     public void onSensorChanged(SensorEvent event) {
-        if (!permissionGranted() || antiCheatLocked) return;
+        if (!permissionGranted()) return;
 
         if (event.sensor.getType() == Sensor.TYPE_STEP_COUNTER) {
             syncFromSystemCounter(event.values[0]);
@@ -443,7 +399,9 @@ public class ActivityPointsPlugin extends Plugin implements SensorEventListener 
         }
 
         if (event.sensor.getType() == Sensor.TYPE_STEP_DETECTOR) {
-            if (event.values.length > 0 && event.values[0] >= 1f) handleDetectedStep();
+            if (event.values.length > 0 && event.values[0] >= 1f) {
+                handleDetectedStep(event.timestamp / 1_000_000L);
+            }
         }
     }
 
